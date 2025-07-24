@@ -21,47 +21,94 @@ def annualized_return(prices: pd.Series, periods_per_year: int = 252) -> float:
     annualized = (1 + total_return) ** (1 / num_years) - 1
     return annualized
 
-
-def calculate_returns(prices: pd.Series) -> pd.Series:
+def price_to_returns(prices: pd.Series) -> pd.Series:
     """Calculate daily returns for a given price series."""
     returns = prices.pct_change().dropna()
     return returns
 
-
-def calculate_monthly_returns(prices: pd.Series) -> pd.Series:
-    """Calculate monthly returns for a given price series."""
+def daily_price_to_monthly_price(prices: pd.Series) -> pd.Series:
+    """Convert daily prices to monthly prices by resampling."""
     monthly_prices = prices.resample("ME").last()
+    return monthly_prices
+
+def daily_price_to_monthly_returns(prices: pd.Series) -> pd.Series:
+    """Calculate monthly returns for a given price series."""
+    monthly_prices = daily_price_to_monthly_price(prices)
     monthly_returns = monthly_prices.pct_change().dropna()
     return monthly_returns
-
 
 def annualized_volatility(returns: pd.Series, periods_per_year: int = 252) -> float:
     """Calculate the annualized volatility of a series of returns."""
     return returns.std() * np.sqrt(periods_per_year)
 
-
 def sharpe_ratio(
-    returns: pd.Series, risk_free_rate: float = 0.0, periods_per_year: int = 252
+    returns: pd.Series, annualized_risk_free_rate: float = 0.0, periods_per_year: int = 252
 ) -> float:
     """Calculate the Sharpe Ratio of a series of returns."""
-    excess_returns = returns - risk_free_rate / periods_per_year
-    return excess_returns.mean() / excess_returns.std() * np.sqrt(periods_per_year)
+    excess_returns = returns - annualized_risk_free_rate / periods_per_year
+    # Annualize the excess returns mean and divide by annualized volatility
+    annualized_excess_return = excess_returns.mean() * periods_per_year
+    annualized_vol = annualized_volatility(excess_returns, periods_per_year)
+    return annualized_excess_return / annualized_vol
 
+def wealth_index(returns: pd.Series) -> pd.Series:
+    """
+    Calculate the wealth index from a series of returns.
+
+    Args:
+        returns (pd.Series): A series of periodic returns.
+
+    Returns:
+        pd.Series: A series representing the cumulative wealth index.
+    """
+    return (1 + returns).cumprod()
 
 def drawdown(returns: pd.Series) -> pd.DataFrame:
-    """Calculate the drawdown of a series of returns. Returns a DataFrame with columns for drawdown, cumulative returns, and peak."""
-    cumulative_returns = (1 + returns).cumprod()
-    peak = cumulative_returns.cummax()
-    drawdown_series = (peak - cumulative_returns) / peak
-    return pd.DataFrame(
+    """
+    Calculate the drawdown of a series of returns.
+
+    Args:
+        returns (pd.Series): A series of periodic returns.
+
+    Returns:
+        pd.DataFrame: A DataFrame with columns for:
+                      - 'Drawdown': The percentage drawdown from the previous peak.
+                      - 'Wealth Index': The cumulative product of returns (representing wealth growth).
+                      - 'Peak': The historical high point of the Wealth Index.
+                      - 'Max Drawdown': The maximum drawdown percentage experienced (a single value).
+    """
+    wi = wealth_index(returns)
+    peak = wi.cummax()
+    drawdown_series = (peak - wi) / peak
+    drawdown_df = pd.DataFrame(
         {
             "Drawdown": drawdown_series,
-            "Cumulative Returns": cumulative_returns,
+            "Wealth Index": wi,
             "Peak": peak,
-            "Max Drawdown": drawdown_series.max(),
         }
     )
+    drawdown_df['Max Drawdown'] = drawdown_series.max() # This will broadcast the single max value to all rows
+    return drawdown_df
 
+def skewness(returns: pd.Series) -> float:
+    """Calculate the skewness of a series of returns."""
+    return returns.skew()
+
+def kurtosis(returns: pd.Series) -> float:
+    """Calculate the kurtosis of a series of returns."""
+    return returns.kurtosis()
+
+def cornish_fisher_var(returns: pd.Series, alpha: float = 0.05) -> float:
+    """Calculate the Cornish-Fisher Value at Risk (VaR) for a series of returns."""
+    # Calculate statistics
+    mean_return = returns.mean()
+    std_return = returns.std()
+    skew = returns.skew()
+    excess_kurtosis = returns.kurtosis()  # pandas kurtosis() already returns excess kurtosis
+    z = norm.ppf(alpha)
+    z_cf = z + (z**2 - 1) * skew / 6 + (z**3 - 3*z) * excess_kurtosis / 24
+    var = mean_return + z_cf * std_return
+    return float(var)
 
 # =============================================================================
 # DATA ACQUISITION
@@ -74,57 +121,6 @@ def download_data(ticker, start_date, end_date):
     data = yf.download(ticker, start=start_date, end=end_date)
     return data
 
-
-# =============================================================================
-# PORTFOLIO OPTIMIZATION
-# =============================================================================
-def optimize_portfolio(mean_returns, cov_matrix, risk_free_rate=0.02):
-    """Find the tangency portfolio (maximum Sharpe ratio)."""
-    n_assets = len(mean_returns)
-    
-    def negative_sharpe(weights):
-        portfolio_return = np.sum(mean_returns * weights)
-        portfolio_vol = np.sqrt(np.dot(weights.T, np.dot(cov_matrix, weights)))
-        return -(portfolio_return - risk_free_rate) / portfolio_vol
-    
-    constraints = ({'type': 'eq', 'fun': lambda x: np.sum(x) - 1})
-    bounds = tuple((0, 1) for _ in range(n_assets))
-    initial_guess = n_assets * [1. / n_assets]
-    
-    result = minimize(negative_sharpe, initial_guess, method='SLSQP', 
-                     bounds=bounds, constraints=constraints)
-    
-    return result.x
-
-def generate_efficient_frontier(mean_returns, cov_matrix, num_portfolios=5000):
-    """Generate efficient frontier using Monte Carlo simulation."""
-    n_assets = len(mean_returns)
-    results = np.zeros((3, num_portfolios))
-    weights_record = []
-    
-    for i in range(num_portfolios):
-        weights = np.random.random(n_assets)
-        weights /= np.sum(weights)
-        weights_record.append(weights)
-        
-        portfolio_return = np.sum(mean_returns * weights)
-        portfolio_vol = np.sqrt(np.dot(weights.T, np.dot(cov_matrix, weights)))
-        
-        results[0, i] = portfolio_return
-        results[1, i] = portfolio_vol
-        results[2, i] = portfolio_return / portfolio_vol  # Sharpe ratio
-    
-    return results, weights_record
-
-def calculate_cml(tangency_return, tangency_vol, risk_free_rate=0.02, max_vol=None):
-    """Calculate Capital Market Line."""
-    if max_vol is None:
-        max_vol = tangency_vol * 2
-    
-    cml_vol = np.linspace(0, max_vol, 100)
-    cml_return = risk_free_rate + (tangency_return - risk_free_rate) / tangency_vol * cml_vol
-    
-    return cml_vol, cml_return
 
 # =============================================================================
 # VISUALIZATION HELPERS
@@ -142,9 +138,7 @@ def create_interactive_plot(x_data, y_data, title="Chart", x_label="X", y_label=
             hovertemplate="%{x}<br>%{y:.2f}<extra></extra>",
         )
     )
-
     fig.update_layout(title=title, xaxis_title=x_label, yaxis_title=y_label, height=400)
-
     return fig
 
 
@@ -153,53 +147,52 @@ def create_interactive_plot(x_data, y_data, title="Chart", x_label="X", y_label=
 # =============================================================================
 
 st.title("Investment Portfolio Analysis Toolkit")
+start_date = st.date_input(
+    "Start Date:",
+    value=pd.to_datetime("today") - pd.Timedelta(days=365 * 10),
+    max_value=pd.to_datetime("today"),
+    min_value=pd.to_datetime("1998-01-01"),
+    help="Select the start date for historical data. Default is 10 years ago.",
+)
+end_date = st.date_input(
+    "End Date:",
+    value=pd.to_datetime("today"),
+    max_value=pd.to_datetime("today"),
+    min_value=pd.to_datetime("1998-01-01"),
+    help="Select the end date for historical data. Default is today.",
+)
 
-tabs = st.tabs(["Analyze stock", "Compare stocks", "Optimize portfolio"])
+tabs = st.tabs(["Analyze stock", "Compare stocks", "Portfolio optimization"])
 
 # =============================================================================
 # TAB 1: SINGLE STOCK ANALYSIS
 # =============================================================================
 
 with tabs[0]:
-    with st.sidebar:
-        st.header("Settings")
-        st.write("Configure your analysis parameters here.")
+    cols = st.columns(3)
+    with cols[0]:
         ticker = st.text_input("Select stock or ETF:", "GOOG")
-        # Set start date to 10 years ago
-        start_date = st.date_input(
-            "Start Date:",
-            value=pd.to_datetime("today") - pd.Timedelta(days=10 * 365),
-            max_value=pd.to_datetime("today"),
-            min_value=pd.to_datetime("1998-01-01"),
-        )
-        end_date = st.date_input(
-            "End Date:",
-            value=pd.to_datetime("today"),
-            max_value=pd.to_datetime("today"),
-            min_value=pd.to_datetime("1998-01-01"),
-        )
-
     if st.button("Download Data"):
         data = download_data(ticker, start_date, end_date)
         st.success("Data downloaded successfully!")
 
         # Calculate key metrics
         close_prices = data["Close"][ticker]
-        returns = calculate_returns(close_prices)
-        monthly_returns = calculate_monthly_returns(close_prices)
+        daily_returns = price_to_returns(close_prices)
+        monthly_returns = daily_price_to_monthly_returns(close_prices)
 
         ann_return = annualized_return(close_prices) * 100
-        volatility = returns.std() * np.sqrt(252) * 100
-        sharpe = sharpe_ratio(returns)
-        max_dd = drawdown(returns)["Max Drawdown"].iloc[0] * 100
-        max_dd_date = drawdown(returns)["Drawdown"].idxmax()
+        volatility = annualized_volatility(daily_returns, periods_per_year=252) * 100
+        sharpe = sharpe_ratio(daily_returns, annualized_risk_free_rate=0.0, periods_per_year=252)
+        max_dd = drawdown(daily_returns)["Max Drawdown"].iloc[0] * 100
+        max_dd_date = drawdown(daily_returns)["Drawdown"].idxmax()
 
-        cumulative_returns = (1 + monthly_returns).cumprod() * 100
+        wi = wealth_index(monthly_returns)
 
         # Show stats in prominent metric boxes
         st.subheader("📊 Key Performance Metrics")
 
-        metric_cols = st.columns(4)
+        metric_cols = st.columns(5)
         with metric_cols[0]:
             st.metric(
                 label="Annualized Return", value=f"{ann_return:+.2f}%", delta=None
@@ -221,9 +214,14 @@ with tabs[0]:
                 help="Maximum drawdown is the largest observed loss from a peak to a trough of a portfolio, before a new peak is achieved.",
             )
 
-        st.write(
-            f"\$100 invested in {ticker} on {start_date.strftime('%Y-%m-%d')} would be worth ${cumulative_returns.iloc[-1]:.2f} on {end_date.strftime('%Y-%m-%d')}."
-        )
+        with metric_cols[4]:
+            # CFVaR
+            st.metric(
+                label="CFVaR",
+                value=f"{100 * cornish_fisher_var(monthly_returns, alpha=0.05):.2f}%",
+                delta=None,
+                help="Cornish-Fisher Value at Risk (VaR) is a risk measure that accounts for skewness and kurtosis in the return distribution.",
+            )
 
         # Charts section
         cols = st.columns(2)
@@ -240,7 +238,7 @@ with tabs[0]:
 
         with cols[1]:
             st.subheader("Monthly Returns")
-            monthly_returns = calculate_monthly_returns(data["Close"][ticker])
+            monthly_returns = daily_price_to_monthly_returns(data["Close"][ticker])
             mean_return = monthly_returns.mean()
             std_dev = monthly_returns.std()
             # Plot mean and standard deviation of monthly returns as well
@@ -310,20 +308,20 @@ with tabs[0]:
             st.plotly_chart(fig, use_container_width=True, height=400)
 
         with cols[1]:
-            st.subheader("Cumulative Returns")
-            cumulative_returns = (1 + monthly_returns).cumprod() * 100
+            st.subheader("Wealth Index (Cumulative Returns)")
+            wi = wealth_index(monthly_returns)
             fig = go.Figure()
             fig.add_trace(
                 go.Scatter(
-                    x=cumulative_returns.index,
-                    y=cumulative_returns,
+                    x=wi.index,
+                    y=wi,
                     mode="lines",
-                    name="Cumulative Returns",
+                    name="Wealth Index",
                     hovertemplate="%{x}<br>%{y:.2f}<extra></extra>",
                 )
             )
             fig.update_layout(
-                title=f"{ticker} Cumulative Returns",
+                title=f"{ticker} Wealth Index",
                 xaxis_title="Date",
                 yaxis_title="Cumulative Return",
                 height=400,
@@ -348,15 +346,17 @@ with tabs[1]:
             value="VWO",
             help="Enter the ticker symbol for Stock B (e.g., VWO for Vanguard FTSE Emerging Markets ETF).",
         )
-
-    if st.button("Compare Stocks"):
+    compare_stocks_button = st.button(
+        "Compare Stocks",
+        help="Click to compare the performance of Stock A and Stock B over the selected date range.",
+    )
+    if compare_stocks_button:
         data_A = download_data(stock_A, start_date, end_date)
         data_B = download_data(stock_B, start_date, end_date)
-        st.success("Data downloaded successfully!")
-
+        
         # Calculate returns
-        returns_A = calculate_returns(data_A["Close"][stock_A])
-        returns_B = calculate_returns(data_B["Close"][stock_B])
+        returns_A = price_to_returns(data_A["Close"][stock_A])
+        returns_B = price_to_returns(data_B["Close"][stock_B])
 
         # Calculate metric values
         ann_return_A = annualized_return(data_A["Close"][stock_A]) * 100
@@ -371,12 +371,13 @@ with tabs[1]:
         max_dd_date_B = drawdown(returns_B)["Drawdown"].idxmax()
 
         cumulative_returns_A = (
-            1 + calculate_monthly_returns(data_A["Close"][stock_A])
+            1 + daily_price_to_monthly_returns(data_A["Close"][stock_A])
         ).cumprod() * 100
         cumulative_returns_B = (
-            1 + calculate_monthly_returns(data_B["Close"][stock_B])
+            1 + daily_price_to_monthly_returns(data_B["Close"][stock_B])
         ).cumprod() * 100
 
+        cols = st.columns(2)
         with cols[0]:
             st.metric(
                 label=f"{stock_A} Annualized Return",
@@ -435,7 +436,7 @@ with tabs[1]:
 
         with cols[0]:
             st.subheader(f"{stock_A} Monthly Returns")
-            monthly_returns_A = calculate_monthly_returns(data_A["Close"][stock_A])
+            monthly_returns_A = daily_price_to_monthly_returns(data_A["Close"][stock_A])
             fig_A_returns = go.Figure()
             fig_A_returns.add_trace(
                 go.Bar(
@@ -455,7 +456,7 @@ with tabs[1]:
 
         with cols[1]:
             st.subheader(f"{stock_B} Monthly Returns")
-            monthly_returns_B = calculate_monthly_returns(data_B["Close"][stock_B])
+            monthly_returns_B = daily_price_to_monthly_returns(data_B["Close"][stock_B])
             fig_B_returns = go.Figure()
             fig_B_returns.add_trace(
                 go.Bar(
@@ -556,164 +557,11 @@ with tabs[1]:
             )
             st.plotly_chart(fig_B_cumulative, use_container_width=True)
 
-# =============================================================================
-# TAB 3: PORTFOLIO OPTIMIZATION
-# =============================================================================
-
 with tabs[2]:
-    st.header("Portfolio Optimization: Efficient Frontier & CML")
-    
-    # Stock selection
-    stocks = st.multiselect(
-        "Select two stocks for Efficient Frontier Analysis",
-        ['VOO', 'GLD', 'VWO', 'VEA', 'AGG'],
-        default=['VOO', 'GLD']
+    st.subheader("Portfolio Optimization")
+    st.write(
+        "This section will allow you to optimize a portfolio of multiple assets based on historical data."
     )
-    
-    # Risk-free rate input
-    risk_free_rate = st.slider("Risk-free rate (%)", 0.0, 5.0, 2.0) / 100
-    
-    if len(stocks) != 2:
-        st.warning("Please select exactly two stocks to proceed.")
-    else:
-        if st.button("Generate Efficient Frontier"):
-            try:
-                # Download data
-                end_date = pd.Timestamp.now()
-                start_date = end_date - pd.DateOffset(years=5)
-                
-                with st.spinner("Downloading data and calculating..."):
-                    data = yf.download(stocks, start=start_date, end=end_date)['Close']
-                    
-                    # Calculate returns and statistics
-                    returns = data.pct_change().dropna()
-                    mean_returns = returns.mean() * 252  # Annualized
-                    cov_matrix = returns.cov() * 252     # Annualized
-                    
-                    # Generate efficient frontier
-                    results, weights_record = generate_efficient_frontier(mean_returns, cov_matrix)
-                    
-                    # Find tangency portfolio
-                    tangency_weights = optimize_portfolio(mean_returns, cov_matrix, risk_free_rate)
-                    tangency_return = np.sum(mean_returns * tangency_weights)
-                    tangency_vol = np.sqrt(np.dot(tangency_weights.T, np.dot(cov_matrix, tangency_weights)))
-                    tangency_sharpe = (tangency_return - risk_free_rate) / tangency_vol
-                    
-                    # Calculate CML
-                    cml_vol, cml_return = calculate_cml(tangency_return, tangency_vol, risk_free_rate, 
-                                                       max_vol=results[1, :].max())
-                
-                # Create the plot
-                fig = go.Figure()
-                
-                # Efficient frontier scatter plot
-                fig.add_trace(go.Scatter(
-                    x=results[1, :],
-                    y=results[0, :],
-                    mode='markers',
-                    marker=dict(
-                        color=results[2, :],
-                        colorscale='Viridis',
-                        showscale=True,
-                        colorbar=dict(title='Sharpe Ratio'),
-                        size=4,
-                        opacity=0.6
-                    ),
-                    name='Portfolios',
-                    hovertemplate='Volatility: %{x:.2%}<br>Return: %{y:.2%}<extra></extra>'
-                ))
-                
-                # Tangency portfolio
-                fig.add_trace(go.Scatter(
-                    x=[tangency_vol],
-                    y=[tangency_return],
-                    mode='markers',
-                    marker=dict(color='red', size=15, symbol='star'),
-                    name='Tangency Portfolio',
-                    hovertemplate='Tangency Portfolio<br>Volatility: %{x:.2%}<br>Return: %{y:.2%}<extra></extra>'
-                ))
-                
-                # Individual stocks
-                stock_vols = np.sqrt(np.diag(cov_matrix))
-                stock_returns = mean_returns.values
-                
-                fig.add_trace(go.Scatter(
-                    x=stock_vols,
-                    y=stock_returns,
-                    mode='markers+text',
-                    marker=dict(color='black', size=12, symbol='diamond'),
-                    text=stocks,
-                    textposition='top center',
-                    name='Individual Stocks',
-                    hovertemplate='%{text}<br>Volatility: %{x:.2%}<br>Return: %{y:.2%}<extra></extra>'
-                ))
-                
-                # Capital Market Line
-                fig.add_trace(go.Scatter(
-                    x=cml_vol,
-                    y=cml_return,
-                    mode='lines',
-                    line=dict(color='blue', dash='dash', width=2),
-                    name='Capital Market Line (CML)',
-                    hovertemplate='CML<br>Volatility: %{x:.2%}<br>Return: %{y:.2%}<extra></extra>'
-                ))
-                
-                # Risk-free asset
-                fig.add_trace(go.Scatter(
-                    x=[0],
-                    y=[risk_free_rate],
-                    mode='markers',
-                    marker=dict(color='green', size=10, symbol='circle'),
-                    name='Risk-free Asset',
-                    hovertemplate='Risk-free Asset<br>Return: %{y:.2%}<extra></extra>'
-                ))
-                
-                fig.update_layout(
-                    title=f'Efficient Frontier & CML for {stocks[0]} and {stocks[1]}',
-                    xaxis_title='Volatility (Standard Deviation)',
-                    yaxis_title='Expected Return',
-                    showlegend=True,
-                    height=600,
-                    xaxis=dict(tickformat='.1%'),
-                    yaxis=dict(tickformat='.1%')
-                )
-                
-                st.plotly_chart(fig, use_container_width=True)
-                
-                # Display results
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    st.subheader("📈 Tangency Portfolio (Optimal Risky Portfolio)")
-                    st.metric("Expected Return", f"{tangency_return:.2%}")
-                    st.metric("Volatility", f"{tangency_vol:.2%}")
-                    st.metric("Sharpe Ratio", f"{tangency_sharpe:.3f}")
-                    
-                    st.write("**Portfolio Weights:**")
-                    for i, stock in enumerate(stocks):
-                        st.write(f"• {stock}: {tangency_weights[i]:.1%}")
-                
-                with col2:
-                    st.subheader("📊 Individual Stock Statistics")
-                    for i, stock in enumerate(stocks):
-                        st.write(f"**{stock}:**")
-                        st.write(f"• Expected Return: {stock_returns[i]:.2%}")
-                        st.write(f"• Volatility: {stock_vols[i]:.2%}")
-                        st.write(f"• Sharpe Ratio: {(stock_returns[i] - risk_free_rate) / stock_vols[i]:.3f}")
-                        st.write("")
-                
-                # Additional metrics
-                st.subheader("📋 Portfolio Analysis Summary")
-                
-                # Correlation
-                correlation = returns.corr().iloc[0, 1]
-                st.write(f"**Correlation between {stocks[0]} and {stocks[1]}:** {correlation:.3f}")
-                
-                # Diversification benefit
-                equal_weight_vol = np.sqrt(0.25 * (stock_vols[0]**2 + stock_vols[1]**2 + 2 * 0.5 * 0.5 * correlation * stock_vols[0] * stock_vols[1]))
-                diversification_benefit = (np.mean(stock_vols) - equal_weight_vol) / np.mean(stock_vols)
-                st.write(f"**Diversification Benefit (Equal Weights):** {diversification_benefit:.1%}")
-                
-            except Exception as e:
-                st.error(f"An error occurred: {str(e)}")
-                st.warning("Please make sure the selected stocks have sufficient historical data.")
+    st.write(
+        "Currently, this feature is under development. Please check back later for updates."
+    )

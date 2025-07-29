@@ -218,6 +218,8 @@ with tabs[1]:
 with tabs[2]:
     asset_input_columns = st.columns(5)
     selected_asset_tickers = []
+    asset_weight_constraints = {}
+    
     for asset_input_index in range(5):
         with asset_input_columns[asset_input_index]:
             asset_ticker_input = st.text_input(
@@ -225,74 +227,115 @@ with tabs[2]:
             )
             if asset_ticker_input.strip():
                 selected_asset_tickers.append(asset_ticker_input.strip())
+                
+                # Add weight constraint inputs side by side
+                weight_constraint_columns = st.columns(2)
+                with weight_constraint_columns[0]:
+                    min_weight = st.number_input(
+                        f"Min %", 
+                        min_value=0.0, 
+                        max_value=100.0, 
+                        value=0.0, 
+                        step=1.0,
+                        key=f"min_weight_{asset_input_index}"
+                    ) / 100.0
+                
+                with weight_constraint_columns[1]:
+                    max_weight = st.number_input(
+                        f"Max %", 
+                        min_value=0.0, 
+                        max_value=100.0, 
+                        value=100.0, 
+                        step=1.0,
+                        key=f"max_weight_{asset_input_index}"
+                    ) / 100.0
+                
+                # Ensure min <= max
+                if min_weight > max_weight:
+                    st.error(f"Min weight cannot exceed max weight for {asset_ticker_input.strip()}")
+                    max_weight = min_weight
+                
+                asset_weight_constraints[asset_ticker_input.strip()] = {
+                    'min': min_weight,
+                    'max': max_weight
+                }
 
-    portfolio_price_data = utils.download_data(selected_asset_tickers, start_date, end_date)["Close"]
-    portfolio_daily_returns = utils.price_to_returns(portfolio_price_data)
-    portfolio_annualized_returns = utils.annualized_return_from_prices_df(portfolio_price_data)
+    if selected_asset_tickers:
+        portfolio_price_data = utils.download_data(selected_asset_tickers, start_date, end_date)["Close"]
+        portfolio_daily_returns = utils.price_to_returns(portfolio_price_data)
+        portfolio_annualized_returns = utils.annualized_return_from_prices_df(portfolio_price_data)
 
-    efficient_frontier_data = utils.calculate_efficient_frontier(portfolio_price_data)
+        efficient_frontier_data = utils.calculate_efficient_frontier(portfolio_price_data, asset_weight_constraints=asset_weight_constraints)
 
+        if not efficient_frontier_data.empty:
+            # Find optimal portfolios
+            optimal_portfolios = {
+                'min_vol': efficient_frontier_data.iloc[efficient_frontier_data["Volatility"].idxmin()],
+                'max_sharpe': efficient_frontier_data.iloc[efficient_frontier_data["Sharpe Ratio"].idxmax()]
+            }
 
-    # Find optimal portfolios
-    optimal_portfolios = {
-        'min_vol': efficient_frontier_data.iloc[efficient_frontier_data["Volatility"].idxmin()],
-        'max_sharpe': efficient_frontier_data.iloc[efficient_frontier_data["Sharpe Ratio"].idxmax()]
-    }
-
-    # Custom target return slider
-    target_return_percentage = st.slider(
-        "Target Annual Return (%):",
-        min_value=float(portfolio_annualized_returns.min() * 100),
-        max_value=float(portfolio_annualized_returns.max() * 100),
-        value=float(portfolio_annualized_returns.mean() * 100),
-    )
-
-    custom_portfolio_weights = utils.min_volatility_portfolio(portfolio_daily_returns, target_return_percentage / 100)
-    custom_portfolio_metrics = None
-
-    if custom_portfolio_weights:
-        custom_portfolio_volatility = utils.portfolio_volatility(portfolio_daily_returns, np.array(custom_portfolio_weights))
-        custom_portfolio_return = np.dot(custom_portfolio_weights, portfolio_annualized_returns)
-        custom_portfolio_metrics = {
-            "volatility": custom_portfolio_volatility,
-            "return": custom_portfolio_return,
-            "sharpe": custom_portfolio_return / custom_portfolio_volatility if custom_portfolio_volatility > 0 else 0,
-        }
-
-    # Plot efficient frontier
-    efficient_frontier_figure = utils.plot_efficient_frontier(efficient_frontier_data, portfolio_daily_returns, custom_portfolio_metrics)
-    st.plotly_chart(efficient_frontier_figure, use_container_width=True)
-
-    # Display portfolios
-    portfolio_display_columns = st.columns(3)
-    portfolio_display_configurations = [
-        (0, "🟢 Min Volatility", optimal_portfolios['min_vol'], "lightgreen"),
-        (1, "⭐ Max Sharpe", optimal_portfolios['max_sharpe'], "gold"),
-        (2, "🎯 Custom Target", None, "lightblue")
-    ]
-
-    for column_index, portfolio_title, portfolio_data, chart_color in portfolio_display_configurations:
-        with portfolio_display_columns[column_index]:
-            st.subheader(portfolio_title)
-            
-            if column_index < 2:  # Min Vol and Max Sharpe
-                st.metric("Return", f"{portfolio_data['Actual Return']:.2%}")
-                st.metric("Volatility", f"{portfolio_data['Volatility']:.2%}")
-                st.metric("Sharpe", f"{portfolio_data['Sharpe Ratio']:.3f}")
-                portfolio_allocation_weights = [portfolio_data[asset_ticker] for asset_ticker in portfolio_daily_returns.columns]
-            else:  # Custom Target
-                if custom_portfolio_weights and custom_portfolio_metrics:
-                    st.metric("Return", f"{custom_portfolio_metrics['return']:.2%}")
-                    st.metric("Volatility", f"{custom_portfolio_metrics['volatility']:.2%}")
-                    st.metric("Sharpe", f"{custom_portfolio_metrics['sharpe']:.3f}")
-                    portfolio_allocation_weights = custom_portfolio_weights
-                else:
-                    st.error("Unable to optimize for target return")
-                    continue
-            
-            st.plotly_chart(
-                utils.create_portfolio_allocation_chart(
-                    portfolio_daily_returns.columns.tolist(), portfolio_allocation_weights, "Allocation", chart_color
-                ),
-                use_container_width=True,
+            # Custom target return slider
+            target_return_percentage = st.slider(
+                "Target Annual Return (%):",
+                min_value=float(portfolio_annualized_returns.min() * 100),
+                max_value=float(portfolio_annualized_returns.max() * 100),
+                value=float(portfolio_annualized_returns.mean() * 100),
             )
+
+            custom_portfolio_weights = utils.min_volatility_portfolio(
+                portfolio_daily_returns, 
+                target_return_percentage / 100, 
+                asset_weight_constraints=asset_weight_constraints
+            )
+            custom_portfolio_metrics = None
+
+            if custom_portfolio_weights:
+                custom_portfolio_volatility = utils.portfolio_volatility(portfolio_daily_returns, np.array(custom_portfolio_weights))
+                custom_portfolio_return = np.dot(custom_portfolio_weights, portfolio_annualized_returns)
+                custom_portfolio_metrics = {
+                    "volatility": custom_portfolio_volatility,
+                    "return": custom_portfolio_return,
+                    "sharpe": custom_portfolio_return / custom_portfolio_volatility if custom_portfolio_volatility > 0 else 0,
+                }
+
+            # Plot efficient frontier
+            efficient_frontier_figure = utils.plot_efficient_frontier(efficient_frontier_data, portfolio_daily_returns, custom_portfolio_metrics)
+            st.plotly_chart(efficient_frontier_figure, use_container_width=True)
+
+            # Display portfolios
+            portfolio_display_columns = st.columns(3)
+            portfolio_display_configurations = [
+                (0, "🟢 Min Volatility", optimal_portfolios['min_vol'], "lightgreen"),
+                (1, "⭐ Max Sharpe", optimal_portfolios['max_sharpe'], "gold"),
+                (2, "🎯 Custom Target", None, "lightblue")
+            ]
+
+            for column_index, portfolio_title, portfolio_data, chart_color in portfolio_display_configurations:
+                with portfolio_display_columns[column_index]:
+                    st.subheader(portfolio_title)
+                    
+                    if column_index < 2:  # Min Vol and Max Sharpe
+                        st.metric("Return", f"{portfolio_data['Actual Return']:.2%}")
+                        st.metric("Volatility", f"{portfolio_data['Volatility']:.2%}")
+                        st.metric("Sharpe", f"{portfolio_data['Sharpe Ratio']:.3f}")
+                        portfolio_allocation_weights = [portfolio_data[asset_ticker] for asset_ticker in portfolio_daily_returns.columns]
+                    else:  # Custom Target
+                        if custom_portfolio_weights and custom_portfolio_metrics:
+                            st.metric("Return", f"{custom_portfolio_metrics['return']:.2%}")
+                            st.metric("Volatility", f"{custom_portfolio_metrics['volatility']:.2%}")
+                            st.metric("Sharpe", f"{custom_portfolio_metrics['sharpe']:.3f}")
+                            portfolio_allocation_weights = custom_portfolio_weights
+                        else:
+                            st.error("Unable to optimize for target return")
+                            continue
+                    
+                    st.plotly_chart(
+                        utils.create_portfolio_allocation_chart(
+                            portfolio_daily_returns.columns.tolist(), portfolio_allocation_weights, "Allocation", chart_color
+                        ),
+                        use_container_width=True,
+                    )
+        else:
+            st.error("Failed to calculate efficient frontier")
+    else:
+        st.info("Enter at least one asset symbol")

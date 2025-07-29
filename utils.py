@@ -74,7 +74,7 @@ def portfolio_volatility(returns: pd.DataFrame, weights: np.ndarray, periods_per
     portfolio_variance = weights.T @ cov_matrix @ weights
     return np.sqrt(portfolio_variance)
 
-def min_volatility_portfolio(daily_returns: pd.DataFrame, target_annual_return: float, periods_per_year: int = 252):
+def min_volatility_portfolio(daily_returns: pd.DataFrame, target_annual_return: float, periods_per_year: int = 252, asset_weight_constraints: dict = None):
     """Minimize portfolio volatility for a given target return."""
     number_of_assets = daily_returns.shape[1]
     # Use compound method for expected returns
@@ -93,7 +93,21 @@ def min_volatility_portfolio(daily_returns: pd.DataFrame, target_annual_return: 
         {'type': 'eq', 'fun': lambda portfolio_weights: np.sum(portfolio_weights) - 1},
         {'type': 'eq', 'fun': lambda portfolio_weights: np.dot(portfolio_weights, expected_annual_returns) - target_annual_return}
     ]
-    weight_bounds = tuple((0.0, 1.0) for _ in range(number_of_assets))
+    
+    # Set weight bounds using constraints if provided
+    if asset_weight_constraints:
+        weight_bounds = []
+        for asset_ticker in daily_returns.columns:
+            if asset_ticker in asset_weight_constraints:
+                min_weight = asset_weight_constraints[asset_ticker]['min']
+                max_weight = asset_weight_constraints[asset_ticker]['max']
+                weight_bounds.append((min_weight, max_weight))
+            else:
+                weight_bounds.append((0.0, 1.0))
+        weight_bounds = tuple(weight_bounds)
+    else:
+        weight_bounds = tuple((0.0, 1.0) for _ in range(number_of_assets))
+    
     initial_weight_guess = [1.0 / number_of_assets] * number_of_assets
     
     optimization_result = minimize(portfolio_volatility_objective, initial_weight_guess, method='SLSQP', bounds=weight_bounds, constraints=optimization_constraints)
@@ -104,7 +118,7 @@ def min_volatility_portfolio(daily_returns: pd.DataFrame, target_annual_return: 
         return optimal_weights.tolist()
     return None
 
-def calculate_efficient_frontier(asset_prices: pd.DataFrame, periods_per_year: int = 252, number_of_points: int = 50):
+def calculate_efficient_frontier(asset_prices: pd.DataFrame, periods_per_year: int = 252, number_of_points: int = 50, asset_weight_constraints: dict = None):
     """Calculate the efficient frontier."""
     if asset_prices.empty:
         return pd.DataFrame()
@@ -121,7 +135,20 @@ def calculate_efficient_frontier(asset_prices: pd.DataFrame, periods_per_year: i
     def portfolio_variance_function(portfolio_weights):
         return portfolio_weights.T @ annual_covariance_matrix @ portfolio_weights
 
-    weight_bounds = tuple((0.0, 1.0) for _ in range(number_of_assets))
+    # Set weight bounds using constraints if provided
+    if asset_weight_constraints:
+        weight_bounds = []
+        for asset_ticker in daily_returns.columns:
+            if asset_ticker in asset_weight_constraints:
+                min_weight = asset_weight_constraints[asset_ticker]['min']
+                max_weight = asset_weight_constraints[asset_ticker]['max']
+                weight_bounds.append((min_weight, max_weight))
+            else:
+                weight_bounds.append((0.0, 1.0))
+        weight_bounds = tuple(weight_bounds)
+    else:
+        weight_bounds = tuple((0.0, 1.0) for _ in range(number_of_assets))
+    
     weights_sum_constraint = {'type': 'eq', 'fun': lambda portfolio_weights: np.sum(portfolio_weights) - 1}
     initial_weight_guess = np.array([1.0 / number_of_assets] * number_of_assets)
 
@@ -162,7 +189,6 @@ def calculate_efficient_frontier(asset_prices: pd.DataFrame, periods_per_year: i
         optimization_result = minimize(portfolio_variance_function, initial_weight_guess, method='SLSQP',
                           bounds=weight_bounds, constraints=portfolio_constraints)
         if not optimization_result.success:
-            st.error(f"Failed to calculate portfolio for target return {target_return_level:.2%}.")
             continue
 
         if optimization_result.success and optimization_result.fun >= 0:  # Ensure positive variance

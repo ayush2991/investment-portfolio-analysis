@@ -1,567 +1,298 @@
 import streamlit as st
-import yfinance as yf
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
 import plotly.graph_objects as go
-from scipy.optimize import minimize
-from scipy.stats import norm
+import utils
 
-st.set_page_config(page_title="Investment Portfolio Analysis Toolkit", layout="wide")
-
-# =============================================================================
-# CORE FINANCIAL CALCULATIONS
-# =============================================================================
-
-
-def annualized_return(prices: pd.Series, periods_per_year: int = 252) -> float:
-    """Calculate the annualized return of a price series."""
-    total_return = (prices.iloc[-1] / prices.iloc[0]) - 1
-    num_years = len(prices) / periods_per_year
-    annualized = (1 + total_return) ** (1 / num_years) - 1
-    return annualized
-
-def price_to_returns(prices: pd.Series) -> pd.Series:
-    """Calculate daily returns for a given price series."""
-    returns = prices.pct_change().dropna()
-    return returns
-
-def daily_price_to_monthly_price(prices: pd.Series) -> pd.Series:
-    """Convert daily prices to monthly prices by resampling."""
-    monthly_prices = prices.resample("ME").last()
-    return monthly_prices
-
-def daily_price_to_monthly_returns(prices: pd.Series) -> pd.Series:
-    """Calculate monthly returns for a given price series."""
-    monthly_prices = daily_price_to_monthly_price(prices)
-    monthly_returns = monthly_prices.pct_change().dropna()
-    return monthly_returns
-
-def annualized_volatility(returns: pd.Series, periods_per_year: int = 252) -> float:
-    """Calculate the annualized volatility of a series of returns."""
-    return returns.std() * np.sqrt(periods_per_year)
-
-def sharpe_ratio(
-    returns: pd.Series, annualized_risk_free_rate: float = 0.0, periods_per_year: int = 252
-) -> float:
-    """Calculate the Sharpe Ratio of a series of returns."""
-    excess_returns = returns - annualized_risk_free_rate / periods_per_year
-    # Annualize the excess returns mean and divide by annualized volatility
-    annualized_excess_return = excess_returns.mean() * periods_per_year
-    annualized_vol = annualized_volatility(excess_returns, periods_per_year)
-    return annualized_excess_return / annualized_vol
-
-def wealth_index(returns: pd.Series) -> pd.Series:
-    """
-    Calculate the wealth index from a series of returns.
-
-    Args:
-        returns (pd.Series): A series of periodic returns.
-
-    Returns:
-        pd.Series: A series representing the cumulative wealth index.
-    """
-    return (1 + returns).cumprod()
-
-def drawdown(returns: pd.Series) -> pd.DataFrame:
-    """
-    Calculate the drawdown of a series of returns.
-
-    Args:
-        returns (pd.Series): A series of periodic returns.
-
-    Returns:
-        pd.DataFrame: A DataFrame with columns for:
-                      - 'Drawdown': The percentage drawdown from the previous peak.
-                      - 'Wealth Index': The cumulative product of returns (representing wealth growth).
-                      - 'Peak': The historical high point of the Wealth Index.
-                      - 'Max Drawdown': The maximum drawdown percentage experienced (a single value).
-    """
-    wi = wealth_index(returns)
-    peak = wi.cummax()
-    drawdown_series = (peak - wi) / peak
-    drawdown_df = pd.DataFrame(
-        {
-            "Drawdown": drawdown_series,
-            "Wealth Index": wi,
-            "Peak": peak,
-        }
-    )
-    drawdown_df['Max Drawdown'] = drawdown_series.max() # This will broadcast the single max value to all rows
-    return drawdown_df
-
-def skewness(returns: pd.Series) -> float:
-    """Calculate the skewness of a series of returns."""
-    return returns.skew()
-
-def kurtosis(returns: pd.Series) -> float:
-    """Calculate the kurtosis of a series of returns."""
-    return returns.kurtosis()
-
-def cornish_fisher_var(returns: pd.Series, alpha: float = 0.05) -> float:
-    """Calculate the Cornish-Fisher Value at Risk (VaR) for a series of returns."""
-    # Calculate statistics
-    mean_return = returns.mean()
-    std_return = returns.std()
-    skew = returns.skew()
-    excess_kurtosis = returns.kurtosis()  # pandas kurtosis() already returns excess kurtosis
-    z = norm.ppf(alpha)
-    z_cf = z + (z**2 - 1) * skew / 6 + (z**3 - 3*z) * excess_kurtosis / 24
-    var = mean_return + z_cf * std_return
-    return float(var)
-
-# =============================================================================
-# DATA ACQUISITION
-# =============================================================================
-
-
-@st.cache_data()
-def download_data(ticker, start_date, end_date):
-    """Download historical stock data from Yahoo Finance."""
-    data = yf.download(ticker, start=start_date, end=end_date)
-    return data
-
-
-# =============================================================================
-# VISUALIZATION HELPERS
-# =============================================================================
-
-
-def create_interactive_plot(x_data, y_data, title="Chart", x_label="X", y_label="Y"):
-    """Create a simple interactive line plot with hover functionality."""
-    fig = go.Figure()
-    fig.add_trace(
-        go.Scatter(
-            x=x_data,
-            y=y_data,
-            mode="lines",
-            hovertemplate="%{x}<br>%{y:.2f}<extra></extra>",
-        )
-    )
-    fig.update_layout(title=title, xaxis_title=x_label, yaxis_title=y_label, height=400)
-    return fig
-
-
-# =============================================================================
-# STREAMLIT APPLICATION
-# =============================================================================
-
+st.set_page_config(page_title="Investment Portfolio Analysis", layout="wide")
 st.title("Investment Portfolio Analysis Toolkit")
+
+# Date inputs
 start_date = st.date_input(
-    "Start Date:",
-    value=pd.to_datetime("today") - pd.Timedelta(days=365 * 10),
-    max_value=pd.to_datetime("today"),
-    min_value=pd.to_datetime("1998-01-01"),
-    help="Select the start date for historical data. Default is 10 years ago.",
+    "Start Date:", value=pd.to_datetime("today") - pd.Timedelta(days=365 * 10)
 )
-end_date = st.date_input(
-    "End Date:",
-    value=pd.to_datetime("today"),
-    max_value=pd.to_datetime("today"),
-    min_value=pd.to_datetime("1998-01-01"),
-    help="Select the end date for historical data. Default is today.",
-)
+end_date = st.date_input("End Date:", value=pd.to_datetime("today"))
 
-tabs = st.tabs(["Analyze stock", "Compare stocks", "Portfolio optimization"])
+tabs = st.tabs(["Analyze Stock", "Compare Stocks", "Portfolio Optimization"])
 
-# =============================================================================
-# TAB 1: SINGLE STOCK ANALYSIS
-# =============================================================================
-
+# Tab 1: Single Stock Analysis
 with tabs[0]:
-    cols = st.columns(3)
+    ticker = st.text_input("Stock or ETF Ticker:", "GOOG")
+    data = utils.download_data(ticker, start_date, end_date)
+
+    close_prices = data["Close"][ticker]
+    daily_returns = utils.price_to_returns(close_prices)
+    monthly_returns = utils.daily_price_to_monthly_returns(close_prices)
+
+    # Key metrics - use compound method for returns consistently
+    ann_return = utils.annualized_return_from_prices(close_prices) * 100
+    volatility = utils.annualized_volatility(daily_returns) * 100
+    sharpe = utils.sharpe_ratio(daily_returns)
+    max_dd = utils.drawdown(daily_returns)["Drawdown"].min() * 100
+    cfvar = utils.cornish_fisher_var(monthly_returns, alpha=0.01) * 100
+
+    # Display metrics
+    cols = st.columns(5)
     with cols[0]:
-        ticker = st.text_input("Select stock or ETF:", "GOOG")
-    if st.button("Download Data"):
-        data = download_data(ticker, start_date, end_date)
-        st.success("Data downloaded successfully!")
+        st.metric("Annualized Return", f"{ann_return:+.2f}%")
+    with cols[1]:
+        st.metric("Volatility", f"{volatility:.2f}%")
+    with cols[2]:
+        st.metric("Sharpe Ratio", f"{sharpe:.2f}")
+    with cols[3]:
+        st.metric("Max Drawdown", f"{max_dd:.2f}%")
+    with cols[4]:
+        st.metric("CFVaR (99%)", f"{cfvar:.2f}%")
 
-        # Calculate key metrics
-        close_prices = data["Close"][ticker]
-        daily_returns = price_to_returns(close_prices)
-        monthly_returns = daily_price_to_monthly_returns(close_prices)
-
-        ann_return = annualized_return(close_prices) * 100
-        volatility = annualized_volatility(daily_returns, periods_per_year=252) * 100
-        sharpe = sharpe_ratio(daily_returns, annualized_risk_free_rate=0.0, periods_per_year=252)
-        max_dd = drawdown(daily_returns)["Max Drawdown"].iloc[0] * 100
-        max_dd_date = drawdown(daily_returns)["Drawdown"].idxmax()
-
-        wi = wealth_index(monthly_returns)
-
-        # Show stats in prominent metric boxes
-        st.subheader("📊 Key Performance Metrics")
-
-        metric_cols = st.columns(5)
-        with metric_cols[0]:
-            st.metric(
-                label="Annualized Return", value=f"{ann_return:+.2f}%", delta=None
-            )
-
-        with metric_cols[1]:
-            st.metric(
-                label="Volatility (Annual)", value=f"{volatility:.2f}%", delta=None
-            )
-
-        with metric_cols[2]:
-            st.metric(label="Sharpe Ratio", value=f"{sharpe:.2f}", delta=None)
-
-        with metric_cols[3]:
-            st.metric(
-                label="Max Drawdown",
-                value=f"-{max_dd:.2f}%",
-                delta=f"on {max_dd_date.strftime('%Y-%m-%d')}" if max_dd_date else None,
-                help="Maximum drawdown is the largest observed loss from a peak to a trough of a portfolio, before a new peak is achieved.",
-            )
-
-        with metric_cols[4]:
-            # CFVaR
-            st.metric(
-                label="CFVaR",
-                value=f"{100 * cornish_fisher_var(monthly_returns, alpha=0.05):.2f}%",
-                delta=None,
-                help="Cornish-Fisher Value at Risk (VaR) is a risk measure that accounts for skewness and kurtosis in the return distribution.",
-            )
-
-        # Charts section
-        cols = st.columns(2)
-        with cols[0]:
-            st.subheader("Stock Price Chart")
-            fig = create_interactive_plot(
-                x_data=data.index,
-                y_data=data["Close"][ticker],
-                title=f"{ticker} Stock Price",
-                x_label="Date",
-                y_label="Price ($)",
-            )
-            st.plotly_chart(fig, use_container_width=True)
-
-        with cols[1]:
-            st.subheader("Monthly Returns")
-            monthly_returns = daily_price_to_monthly_returns(data["Close"][ticker])
-            mean_return = monthly_returns.mean()
-            std_dev = monthly_returns.std()
-            # Plot mean and standard deviation of monthly returns as well
-            fig = go.Figure()
-            fig.add_trace(
-                go.Bar(
-                    x=monthly_returns.index,
-                    y=monthly_returns,
-                    name="Monthly Returns",
-                    hovertemplate="%{x}<br>%{y:.2%}<extra></extra>",
-                )
-            )
-            fig.add_trace(
-                go.Scatter(
-                    x=monthly_returns.index,
-                    y=[mean_return] * len(monthly_returns),
-                    mode="lines",
-                    name="Mean Return",
-                    line=dict(dash="dash"),
-                )
-            )
-            fig.add_trace(
-                go.Scatter(
-                    x=monthly_returns.index,
-                    y=[mean_return + std_dev] * len(monthly_returns),
-                    mode="lines",
-                    name="Mean + Std Dev",
-                    line=dict(dash="dash", color="red"),
-                )
-            )
-            fig.add_trace(
-                go.Scatter(
-                    x=monthly_returns.index,
-                    y=[mean_return - std_dev] * len(monthly_returns),
-                    mode="lines",
-                    name="Mean - Std Dev",
-                    line=dict(dash="dash", color="red"),
-                )
-            )
-            fig.update_layout(
-                title=f"{ticker} Monthly Returns",
-                xaxis_title="Date",
-                yaxis_title="Return (%)",
-                height=400,
-            )
-            st.plotly_chart(fig, use_container_width=True)
-
-        with cols[0]:
-            st.subheader("Drawdown (monthly returns)")
-            drawdowns = drawdown(monthly_returns)
-            fig = go.Figure()
-            fig.add_trace(
-                go.Scatter(
-                    x=drawdowns.index,
-                    y=drawdowns["Drawdown"],
-                    mode="lines",
-                    name="Drawdown",
-                    line=dict(color="red"),
-                )
-            )
-            fig.update_layout(
-                title=f"{ticker} Drawdown",
-                xaxis_title="Date",
-                yaxis_title="Value",
-                height=400,
-            )
-            st.plotly_chart(fig, use_container_width=True, height=400)
-
-        with cols[1]:
-            st.subheader("Wealth Index (Cumulative Returns)")
-            wi = wealth_index(monthly_returns)
-            fig = go.Figure()
-            fig.add_trace(
-                go.Scatter(
-                    x=wi.index,
-                    y=wi,
-                    mode="lines",
-                    name="Wealth Index",
-                    hovertemplate="%{x}<br>%{y:.2f}<extra></extra>",
-                )
-            )
-            fig.update_layout(
-                title=f"{ticker} Wealth Index",
-                xaxis_title="Date",
-                yaxis_title="Cumulative Return",
-                height=400,
-            )
-            st.plotly_chart(fig, use_container_width=True)
-
-# =============================================================================
-# TAB 2: STOCK COMPARISON
-# =============================================================================
-
-with tabs[1]:
+    # Charts
     cols = st.columns(2)
     with cols[0]:
-        stock_A = st.text_input(
-            label="Stock A Ticker:",
-            value="SPY",
-            help="Enter the ticker symbol for Stock A (e.g., SPY for S&P 500 ETF).",
+        st.plotly_chart(
+            utils.create_interactive_plot(
+                data.index, close_prices, f"{ticker} Price", "Date", "Price ($)"
+            ),
+            use_container_width=True,
         )
+
+        drawdowns = utils.drawdown(monthly_returns)
+        fig = go.Figure()
+        fig.add_trace(
+            go.Scatter(
+                x=drawdowns.index,
+                y=drawdowns["Drawdown"],
+                mode="lines",
+                line=dict(color="red"),
+            )
+        )
+        fig.update_layout(
+            title=f"{ticker} Drawdown",
+            xaxis_title="Date",
+            yaxis_title="Drawdown",
+            height=400,
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
     with cols[1]:
-        stock_B = st.text_input(
-            label="Stock B Ticker:",
-            value="VWO",
-            help="Enter the ticker symbol for Stock B (e.g., VWO for Vanguard FTSE Emerging Markets ETF).",
+        fig = go.Figure()
+        fig.add_trace(
+            go.Bar(x=monthly_returns.index, y=monthly_returns, name="Monthly Returns")
         )
-    compare_stocks_button = st.button(
-        "Compare Stocks",
-        help="Click to compare the performance of Stock A and Stock B over the selected date range.",
-    )
-    if compare_stocks_button:
-        data_A = download_data(stock_A, start_date, end_date)
-        data_B = download_data(stock_B, start_date, end_date)
+        fig.update_layout(
+            title=f"{ticker} Monthly Returns",
+            xaxis_title="Date",
+            yaxis_title="Return",
+            height=400,
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+        wi = utils.wealth_index(monthly_returns)
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=wi.index, y=wi, mode="lines"))
+        fig.update_layout(
+            title=f"{ticker} Wealth Index",
+            xaxis_title="Date",
+            yaxis_title="Cumulative Return",
+            height=400,
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+# Tab 2: Stock Comparison
+with tabs[1]:
+    input_columns = st.columns(2)
+    with input_columns[0]:
+        first_stock_ticker = st.text_input("Stock A:", "SPY")
+    with input_columns[1]:
+        second_stock_ticker = st.text_input("Stock B:", "VWO")
+
+    if st.button("Compare Stocks"):
+        stock_tickers_to_compare = [first_stock_ticker, second_stock_ticker]
+        stock_analysis_data = {}
         
-        # Calculate returns
-        returns_A = price_to_returns(data_A["Close"][stock_A])
-        returns_B = price_to_returns(data_B["Close"][stock_B])
+        for current_stock_ticker in stock_tickers_to_compare:
+            stock_price_data = utils.download_data(current_stock_ticker, start_date, end_date)
+            stock_closing_prices = stock_price_data["Close"][current_stock_ticker]
+            stock_daily_returns = utils.price_to_returns(stock_closing_prices)
+            stock_monthly_returns = utils.daily_price_to_monthly_returns(stock_closing_prices)
+            
+            stock_analysis_data[current_stock_ticker] = {
+                'return': utils.annualized_return_from_prices(stock_closing_prices) * 100,
+                'volatility': utils.annualized_volatility(stock_daily_returns) * 100,
+                'sharpe': utils.sharpe_ratio(stock_daily_returns),
+                'max_drawdown': utils.drawdown(stock_daily_returns)["Drawdown"].min() * 100,
+                'cfvar': utils.cornish_fisher_var(stock_monthly_returns, alpha=0.01) * 100,
+                'data': stock_price_data,
+                'close_prices': stock_closing_prices,
+                'daily_returns': stock_daily_returns,
+                'monthly_returns': stock_monthly_returns
+            }
 
-        # Calculate metric values
-        ann_return_A = annualized_return(data_A["Close"][stock_A]) * 100
-        ann_return_B = annualized_return(data_B["Close"][stock_B]) * 100
-        volatility_A = returns_A.std() * np.sqrt(252) * 100
-        volatility_B = returns_B.std() * np.sqrt(252) * 100
-        sharpe_A = sharpe_ratio(returns_A)
-        sharpe_B = sharpe_ratio(returns_B)
-        max_dd_A = drawdown(returns_A)["Max Drawdown"].iloc[0] * 100
-        max_dd_B = drawdown(returns_B)["Max Drawdown"].iloc[0] * 100
-        max_dd_date_A = drawdown(returns_A)["Drawdown"].idxmax()
-        max_dd_date_B = drawdown(returns_B)["Drawdown"].idxmax()
+        # Display comparison metrics
+        comparison_columns = st.columns(2)
+        for stock_index, current_stock_ticker in enumerate(stock_tickers_to_compare):
+            with comparison_columns[stock_index]:
+                st.subheader(f"{current_stock_ticker}")
+                current_stock_metrics = stock_analysis_data[current_stock_ticker]
+                
+                # Display key metrics
+                metrics_columns = st.columns(3)
+                with metrics_columns[0]:
+                    st.metric("Return", f"{current_stock_metrics['return']:.2f}%")
+                    st.metric("Volatility", f"{current_stock_metrics['volatility']:.2f}%")
+                with metrics_columns[1]:
+                    st.metric("Sharpe", f"{current_stock_metrics['sharpe']:.2f}")
+                    st.metric("Max Drawdown", f"{current_stock_metrics['max_drawdown']:.2f}%")
+                with metrics_columns[2]:
+                    st.metric("CFVaR (99%)", f"{current_stock_metrics['cfvar']:.2f}%")
 
-        cumulative_returns_A = (
-            1 + daily_price_to_monthly_returns(data_A["Close"][stock_A])
-        ).cumprod() * 100
-        cumulative_returns_B = (
-            1 + daily_price_to_monthly_returns(data_B["Close"][stock_B])
-        ).cumprod() * 100
-
-        cols = st.columns(2)
-        with cols[0]:
-            st.metric(
-                label=f"{stock_A} Annualized Return",
-                value=f"{ann_return_A:+.2f}%",
-                delta=None,
-            )
-
-            st.metric(
-                label=f"{stock_A} Volatility (Annual)",
-                value=f"{volatility_A:.2f}%",
-                delta=None,
-            )
-
-            st.metric(
-                label=f"{stock_A} Sharpe Ratio", value=f"{sharpe_A:.2f}", delta=None
-            )
-
-        with cols[1]:
-            st.metric(
-                label=f"{stock_B} Annualized Return",
-                value=f"{ann_return_B:+.2f}%",
-                delta=None,
-            )
-
-            st.metric(
-                label=f"{stock_B} Volatility (Annual)",
-                value=f"{volatility_B:.2f}%",
-                delta=None,
-            )
-
-            st.metric(
-                label=f"{stock_B} Sharpe Ratio", value=f"{sharpe_B:.2f}", delta=None
-            )
-
-        with cols[0]:
-            fig_A = create_interactive_plot(
-                x_data=data_A.index,
-                y_data=data_A["Close"][stock_A],
-                title=f"{stock_A} Stock Price",
-                x_label="Date",
-                y_label="Price ($)",
-            )
-            st.subheader(f"{stock_A} Stock Price Chart")
-            st.plotly_chart(fig_A, use_container_width=True)
-
-        with cols[1]:
-            fig_B = create_interactive_plot(
-                x_data=data_B.index,
-                y_data=data_B["Close"][stock_B],
-                title=f"{stock_B} Stock Price",
-                x_label="Date",
-                y_label="Price ($)",
-            )
-            st.subheader(f"{stock_B} Stock Price Chart")
-            st.plotly_chart(fig_B, use_container_width=True)
-
-        with cols[0]:
-            st.subheader(f"{stock_A} Monthly Returns")
-            monthly_returns_A = daily_price_to_monthly_returns(data_A["Close"][stock_A])
-            fig_A_returns = go.Figure()
-            fig_A_returns.add_trace(
-                go.Bar(
-                    x=monthly_returns_A.index,
-                    y=monthly_returns_A,
-                    name="Monthly Returns",
-                    hovertemplate="%{x}<br>%{y:.2%}<extra></extra>",
+        # Display charts in rows
+        st.subheader("Price Comparison")
+        price_chart_columns = st.columns(2)
+        for stock_index, current_stock_ticker in enumerate(stock_tickers_to_compare):
+            with price_chart_columns[stock_index]:
+                st.plotly_chart(
+                    utils.create_interactive_plot(
+                        stock_analysis_data[current_stock_ticker]['data'].index,
+                        stock_analysis_data[current_stock_ticker]['close_prices'],
+                        f"{current_stock_ticker} Price",
+                        "Date",
+                        "Price ($)",
+                    ),
+                    use_container_width=True,
                 )
-            )
-            fig_A_returns.update_layout(
-                title=f"{stock_A} Monthly Returns",
-                xaxis_title="Date",
-                yaxis_title="Return (%)",
-                height=400,
-            )
-            st.plotly_chart(fig_A_returns, use_container_width=True)
 
-        with cols[1]:
-            st.subheader(f"{stock_B} Monthly Returns")
-            monthly_returns_B = daily_price_to_monthly_returns(data_B["Close"][stock_B])
-            fig_B_returns = go.Figure()
-            fig_B_returns.add_trace(
-                go.Bar(
-                    x=monthly_returns_B.index,
-                    y=monthly_returns_B,
-                    name="Monthly Returns",
-                    hovertemplate="%{x}<br>%{y:.2%}<extra></extra>",
+        st.subheader("Drawdown Comparison")
+        drawdown_chart_columns = st.columns(2)
+        for stock_index, current_stock_ticker in enumerate(stock_tickers_to_compare):
+            with drawdown_chart_columns[stock_index]:
+                stock_drawdowns = utils.drawdown(stock_analysis_data[current_stock_ticker]['monthly_returns'])
+                drawdown_figure = go.Figure()
+                drawdown_figure.add_trace(
+                    go.Scatter(
+                        x=stock_drawdowns.index,
+                        y=stock_drawdowns["Drawdown"],
+                        mode="lines",
+                        line=dict(color="red"),
+                    )
                 )
-            )
-            fig_B_returns.update_layout(
-                title=f"{stock_B} Monthly Returns",
-                xaxis_title="Date",
-                yaxis_title="Return (%)",
-                height=400,
-            )
-            st.plotly_chart(fig_B_returns, use_container_width=True)
-        with cols[0]:
-            st.subheader(f"{stock_A} Drawdown (monthly returns)")
-            drawdowns_A = drawdown(monthly_returns_A)
-            fig_A_drawdown = go.Figure()
-            fig_A_drawdown.add_trace(
-                go.Scatter(
-                    x=drawdowns_A.index,
-                    y=drawdowns_A["Drawdown"],
-                    mode="lines",
-                    name="Drawdown",
-                    line=dict(color="red"),
+                drawdown_figure.update_layout(
+                    title=f"{current_stock_ticker} Drawdown",
+                    xaxis_title="Date",
+                    yaxis_title="Drawdown",
+                    height=400,
                 )
-            )
-            fig_A_drawdown.update_layout(
-                title=f"{stock_A} Drawdown",
-                xaxis_title="Date",
-                yaxis_title="Value",
-                height=400,
-            )
-            st.plotly_chart(fig_A_drawdown, use_container_width=True)
+                st.plotly_chart(drawdown_figure, use_container_width=True)
 
-        with cols[1]:
-            st.subheader(f"{stock_B} Drawdown (monthly returns)")
-            drawdowns_B = drawdown(monthly_returns_B)
-            fig_B_drawdown = go.Figure()
-            fig_B_drawdown.add_trace(
-                go.Scatter(
-                    x=drawdowns_B.index,
-                    y=drawdowns_B["Drawdown"],
-                    mode="lines",
-                    name="Drawdown",
-                    line=dict(color="red"),
+        st.subheader("Monthly Returns Comparison")
+        monthly_returns_chart_columns = st.columns(2)
+        for stock_index, current_stock_ticker in enumerate(stock_tickers_to_compare):
+            with monthly_returns_chart_columns[stock_index]:
+                stock_monthly_returns = stock_analysis_data[current_stock_ticker]['monthly_returns']
+                monthly_returns_figure = go.Figure()
+                monthly_returns_figure.add_trace(
+                    go.Bar(x=stock_monthly_returns.index, y=stock_monthly_returns, name="Monthly Returns")
                 )
-            )
-            fig_B_drawdown.update_layout(
-                title=f"{stock_B} Drawdown",
-                xaxis_title="Date",
-                yaxis_title="Value",
-                height=400,
-            )
-            st.plotly_chart(fig_B_drawdown, use_container_width=True)
-
-        with cols[0]:
-            st.subheader(f"{stock_A} Cumulative Returns")
-            cumulative_returns_A = (1 + monthly_returns_A).cumprod() * 100
-            fig_A_cumulative = go.Figure()
-            fig_A_cumulative.add_trace(
-                go.Scatter(
-                    x=cumulative_returns_A.index,
-                    y=cumulative_returns_A,
-                    mode="lines",
-                    name="Cumulative Returns",
-                    hovertemplate="%{x}<br>%{y:.2f}<extra></extra>",
+                monthly_returns_figure.update_layout(
+                    title=f"{current_stock_ticker} Monthly Returns",
+                    xaxis_title="Date",
+                    yaxis_title="Return",
+                    height=400,
                 )
-            )
-            fig_A_cumulative.update_layout(
-                title=f"{stock_A} Cumulative Returns",
-                xaxis_title="Date",
-                yaxis_title="Cumulative Return",
-                height=400,
-            )
-            st.plotly_chart(fig_A_cumulative, use_container_width=True)
+                st.plotly_chart(monthly_returns_figure, use_container_width=True)
 
-        with cols[1]:
-            st.subheader(f"{stock_B} Cumulative Returns")
-            cumulative_returns_B = (1 + monthly_returns_B).cumprod() * 100
-            fig_B_cumulative = go.Figure()
-            fig_B_cumulative.add_trace(
-                go.Scatter(
-                    x=cumulative_returns_B.index,
-                    y=cumulative_returns_B,
-                    mode="lines",
-                    name="Cumulative Returns",
-                    hovertemplate="%{x}<br>%{y:.2f}<extra></extra>",
+        st.subheader("Wealth Index Comparison")
+        wealth_index_chart_columns = st.columns(2)
+        for stock_index, current_stock_ticker in enumerate(stock_tickers_to_compare):
+            with wealth_index_chart_columns[stock_index]:
+                stock_wealth_index = utils.wealth_index(stock_analysis_data[current_stock_ticker]['monthly_returns'])
+                wealth_index_figure = go.Figure()
+                wealth_index_figure.add_trace(go.Scatter(x=stock_wealth_index.index, y=stock_wealth_index, mode="lines"))
+                wealth_index_figure.update_layout(
+                    title=f"{current_stock_ticker} Wealth Index",
+                    xaxis_title="Date",
+                    yaxis_title="Cumulative Return",
+                    height=400,
                 )
-            )
-            fig_B_cumulative.update_layout(
-                title=f"{stock_B} Cumulative Returns",
-                xaxis_title="Date",
-                yaxis_title="Cumulative Return",
-                height=400,
-            )
-            st.plotly_chart(fig_B_cumulative, use_container_width=True)
+                st.plotly_chart(wealth_index_figure, use_container_width=True)
 
+# Tab 3: Portfolio Optimization
 with tabs[2]:
-    st.subheader("Portfolio Optimization")
-    st.write(
-        "This section will allow you to optimize a portfolio of multiple assets based on historical data."
+    asset_input_columns = st.columns(5)
+    selected_asset_tickers = []
+    for asset_input_index in range(5):
+        with asset_input_columns[asset_input_index]:
+            asset_ticker_input = st.text_input(
+                f"Asset {asset_input_index+1}", value=["MSFT", "QQQ", "VOO", "VXUS", "GLD"][asset_input_index]
+            )
+            if asset_ticker_input.strip():
+                selected_asset_tickers.append(asset_ticker_input.strip())
+
+    portfolio_price_data = utils.download_data(selected_asset_tickers, start_date, end_date)["Close"]
+    portfolio_daily_returns = utils.price_to_returns(portfolio_price_data)
+    portfolio_annualized_returns = utils.annualized_return_from_prices_df(portfolio_price_data)
+
+    efficient_frontier_data = utils.calculate_efficient_frontier(portfolio_price_data)
+
+
+    # Find optimal portfolios
+    optimal_portfolios = {
+        'min_vol': efficient_frontier_data.iloc[efficient_frontier_data["Volatility"].idxmin()],
+        'max_sharpe': efficient_frontier_data.iloc[efficient_frontier_data["Sharpe Ratio"].idxmax()]
+    }
+
+    # Custom target return slider
+    target_return_percentage = st.slider(
+        "Target Annual Return (%):",
+        min_value=float(portfolio_annualized_returns.min() * 100),
+        max_value=float(portfolio_annualized_returns.max() * 100),
+        value=float(portfolio_annualized_returns.mean() * 100),
     )
-    st.write(
-        "Currently, this feature is under development. Please check back later for updates."
-    )
+
+    custom_portfolio_weights = utils.min_volatility_portfolio(portfolio_daily_returns, target_return_percentage / 100)
+    custom_portfolio_metrics = None
+
+    if custom_portfolio_weights:
+        custom_portfolio_volatility = utils.portfolio_volatility(portfolio_daily_returns, np.array(custom_portfolio_weights))
+        custom_portfolio_return = np.dot(custom_portfolio_weights, portfolio_annualized_returns)
+        custom_portfolio_metrics = {
+            "volatility": custom_portfolio_volatility,
+            "return": custom_portfolio_return,
+            "sharpe": custom_portfolio_return / custom_portfolio_volatility if custom_portfolio_volatility > 0 else 0,
+        }
+
+    # Plot efficient frontier
+    efficient_frontier_figure = utils.plot_efficient_frontier(efficient_frontier_data, portfolio_daily_returns, custom_portfolio_metrics)
+    st.plotly_chart(efficient_frontier_figure, use_container_width=True)
+
+    # Display portfolios
+    portfolio_display_columns = st.columns(3)
+    portfolio_display_configurations = [
+        (0, "🟢 Min Volatility", optimal_portfolios['min_vol'], "lightgreen"),
+        (1, "⭐ Max Sharpe", optimal_portfolios['max_sharpe'], "gold"),
+        (2, "🎯 Custom Target", None, "lightblue")
+    ]
+
+    for column_index, portfolio_title, portfolio_data, chart_color in portfolio_display_configurations:
+        with portfolio_display_columns[column_index]:
+            st.subheader(portfolio_title)
+            
+            if column_index < 2:  # Min Vol and Max Sharpe
+                st.metric("Return", f"{portfolio_data['Actual Return']:.2%}")
+                st.metric("Volatility", f"{portfolio_data['Volatility']:.2%}")
+                st.metric("Sharpe", f"{portfolio_data['Sharpe Ratio']:.3f}")
+                portfolio_allocation_weights = [portfolio_data[asset_ticker] for asset_ticker in portfolio_daily_returns.columns]
+            else:  # Custom Target
+                if custom_portfolio_weights and custom_portfolio_metrics:
+                    st.metric("Return", f"{custom_portfolio_metrics['return']:.2%}")
+                    st.metric("Volatility", f"{custom_portfolio_metrics['volatility']:.2%}")
+                    st.metric("Sharpe", f"{custom_portfolio_metrics['sharpe']:.3f}")
+                    portfolio_allocation_weights = custom_portfolio_weights
+                else:
+                    st.error("Unable to optimize for target return")
+                    continue
+            
+            st.plotly_chart(
+                utils.create_portfolio_allocation_chart(
+                    portfolio_daily_returns.columns.tolist(), portfolio_allocation_weights, "Allocation", chart_color
+                ),
+                use_container_width=True,
+            )

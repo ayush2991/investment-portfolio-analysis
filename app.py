@@ -67,7 +67,7 @@ with tabs[0]:
     with cols[4]:
         st.metric("Max Drawdown", f"{max_dd:.2f}%")
     with cols[5]:
-        st.metric("CFVaR (99%)", f"{cfvar:.2f}%")
+        st.metric("Monthly CFVaR (99%)", f"{cfvar:.2f}%")
     with cols[6]:
         st.metric("Sortino Ratio", f"{sortino:.2f}")
 
@@ -174,7 +174,7 @@ with tabs[1]:
                         st.metric("Max Drawdown", f"{current_stock_metrics['max_drawdown']:.2f}%")
                     with metrics_columns[2]:
                         st.metric("Sortino", f"{current_stock_metrics['sortino']:.2f}")
-                        st.metric("CFVaR (99%)", f"{current_stock_metrics['cfvar']:.2f}%")
+                        st.metric("Monthly CFVaR (99%)", f"{current_stock_metrics['cfvar']:.2f}%")
 
         # Display charts in rows
         st.subheader("Price Comparison")
@@ -369,16 +369,26 @@ with tabs[2]:
         # Calculate Portfolio A metrics
         portfolio_a_daily_returns = daily_returns_data[portfolio_a_assets]
         portfolio_a_portfolio_returns = (portfolio_a_daily_returns * portfolio_a_weights).sum(axis=1)
+        portfolio_a_monthly_returns = utils.daily_returns_to_monthly_returns(portfolio_a_portfolio_returns)
         portfolio_a_annualized_return = utils.annualized_return(portfolio_a_portfolio_returns) * 100
         portfolio_a_annualized_volatility = utils.annualized_volatility(portfolio_a_portfolio_returns) * 100
+        portfolio_a_semideviation = utils.annualized_semideviation(portfolio_a_portfolio_returns) * 100
         portfolio_a_sharpe_ratio = utils.sharpe_ratio(portfolio_a_portfolio_returns, risk_free_rate=risk_free_rate)
+        portfolio_a_sortino_ratio = utils.sortino_ratio(portfolio_a_portfolio_returns, risk_free_rate=risk_free_rate)
+        portfolio_a_max_drawdown = utils.drawdown(portfolio_a_monthly_returns)["Drawdown"].min() * 100
+        portfolio_a_cfvar = utils.cornish_fisher_var(portfolio_a_monthly_returns, alpha=0.01) * 100
         
         # Calculate Portfolio B metrics
         portfolio_b_daily_returns = daily_returns_data[portfolio_b_assets]
         portfolio_b_portfolio_returns = (portfolio_b_daily_returns * portfolio_b_weights).sum(axis=1)
+        portfolio_b_monthly_returns = utils.daily_returns_to_monthly_returns(portfolio_b_portfolio_returns)
         portfolio_b_annualized_return = utils.annualized_return(portfolio_b_portfolio_returns) * 100
         portfolio_b_annualized_volatility = utils.annualized_volatility(portfolio_b_portfolio_returns) * 100
+        portfolio_b_semideviation = utils.annualized_semideviation(portfolio_b_portfolio_returns) * 100
         portfolio_b_sharpe_ratio = utils.sharpe_ratio(portfolio_b_portfolio_returns, risk_free_rate=risk_free_rate)
+        portfolio_b_sortino_ratio = utils.sortino_ratio(portfolio_b_portfolio_returns, risk_free_rate=risk_free_rate)
+        portfolio_b_max_drawdown = utils.drawdown(portfolio_b_monthly_returns)["Drawdown"].min() * 100
+        portfolio_b_cfvar = utils.cornish_fisher_var(portfolio_b_monthly_returns, alpha=0.01) * 100
         
         # Display comparison results
         st.subheader("Portfolio Comparison Results")
@@ -387,9 +397,19 @@ with tabs[2]:
         with comparison_results_columns[0]:
             with st.container(border=True):
                 st.subheader("Portfolio A Performance")
-                st.metric("Annualized Return", f"{portfolio_a_annualized_return:.2f}%")
-                st.metric("Annualized Volatility", f"{portfolio_a_annualized_volatility:.2f}%")
-                st.metric("Sharpe Ratio", f"{portfolio_a_sharpe_ratio:.3f}")
+                
+                # Display comprehensive metrics in columns
+                metrics_columns = st.columns(3)
+                with metrics_columns[0]:
+                    st.metric("Annualized Return", f"{portfolio_a_annualized_return:+.2f}%")
+                    st.metric("Volatility", f"{portfolio_a_annualized_volatility:.2f}%")
+                    st.metric("Semideviation", f"{portfolio_a_semideviation:.2f}%")
+                with metrics_columns[1]:
+                    st.metric("Sharpe Ratio", f"{portfolio_a_sharpe_ratio:.2f}")
+                    st.metric("Max Drawdown", f"{portfolio_a_max_drawdown:.2f}%")
+                with metrics_columns[2]:
+                    st.metric("Sortino Ratio", f"{portfolio_a_sortino_ratio:.2f}")
+                    st.metric("Monthly CFVaR (99%)", f"{portfolio_a_cfvar:.2f}%")
                 
                 # Portfolio A allocation chart
                 st.plotly_chart(
@@ -402,9 +422,19 @@ with tabs[2]:
         with comparison_results_columns[1]:
             with st.container(border=True):
                 st.subheader("Portfolio B Performance")
-                st.metric("Annualized Return", f"{portfolio_b_annualized_return:.2f}%")
-                st.metric("Annualized Volatility", f"{portfolio_b_annualized_volatility:.2f}%")
-                st.metric("Sharpe Ratio", f"{portfolio_b_sharpe_ratio:.3f}")
+                
+                # Display comprehensive metrics in columns
+                metrics_columns = st.columns(3)
+                with metrics_columns[0]:
+                    st.metric("Annualized Return", f"{portfolio_b_annualized_return:+.2f}%")
+                    st.metric("Volatility", f"{portfolio_b_annualized_volatility:.2f}%")
+                    st.metric("Semideviation", f"{portfolio_b_semideviation:.2f}%")
+                with metrics_columns[1]:
+                    st.metric("Sharpe Ratio", f"{portfolio_b_sharpe_ratio:.2f}")
+                    st.metric("Max Drawdown", f"{portfolio_b_max_drawdown:.2f}%")
+                with metrics_columns[2]:
+                    st.metric("Sortino Ratio", f"{portfolio_b_sortino_ratio:.2f}")
+                    st.metric("Monthly CFVaR (99%)", f"{portfolio_b_cfvar:.2f}%")
                 
                 # Portfolio B allocation chart
                 st.plotly_chart(
@@ -416,6 +446,34 @@ with tabs[2]:
         
         # Performance comparison charts
         st.subheader("Performance Comparison Charts")
+        
+        # Drawdown comparison
+        with st.container(border=True):
+            portfolio_a_drawdowns = utils.drawdown(portfolio_a_monthly_returns)
+            portfolio_b_drawdowns = utils.drawdown(portfolio_b_monthly_returns)
+
+            drawdown_comparison_figure = go.Figure()
+            drawdown_comparison_figure.add_trace(go.Scatter(
+                x=portfolio_a_drawdowns.index,
+                y=portfolio_a_drawdowns["Drawdown"],
+                mode="lines",
+                name="Portfolio A Drawdown",
+                line=dict(color="blue")
+            ))
+            drawdown_comparison_figure.add_trace(go.Scatter(
+                x=portfolio_b_drawdowns.index,
+                y=portfolio_b_drawdowns["Drawdown"],
+                mode="lines",
+                name="Portfolio B Drawdown",
+                line=dict(color="red")
+            ))
+            drawdown_comparison_figure.update_layout(
+                title="Portfolio Drawdown Comparison",
+                xaxis_title="Date",
+                yaxis_title="Drawdown",
+                height=500
+            )
+            st.plotly_chart(drawdown_comparison_figure, use_container_width=True)
         
         with st.container(border=True):
             # Wealth index comparison

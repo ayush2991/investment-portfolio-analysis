@@ -68,6 +68,11 @@ def annualized_return(returns, periods_per_year: int = 252) -> float:
     num_years = len(returns) / periods_per_year
     return (1 + total_return) ** (1 / num_years) - 1
 
+def daily_returns_to_monthly_returns(daily_returns: pd.Series) -> pd.Series:
+    """Convert daily returns to monthly returns."""
+    monthly_returns = daily_returns.resample("ME").apply(lambda x: (1 + x).prod() - 1)
+    return monthly_returns.dropna()
+
 def price_to_returns(prices):
     """Calculate daily returns for a given price series or DataFrame."""
     return prices.pct_change().dropna()

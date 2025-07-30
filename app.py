@@ -40,6 +40,10 @@ tabs = st.tabs(["Analyze Stock", "Compare Stocks", "Compare Portfolios", "Portfo
 with tabs[0]:
     ticker = st.text_input("Stock or ETF Ticker:", "GOOG")
     
+    # Display security information
+    if ticker:
+        utils.display_security_header(ticker)
+    
     data = utils.download_data(ticker, start_date, end_date)
     close_prices = data["Close"][ticker]
     daily_returns = utils.price_to_returns(close_prices)
@@ -167,7 +171,8 @@ with tabs[1]:
         for stock_index, current_stock_ticker in enumerate(stock_tickers_to_compare):
             with comparison_columns[stock_index]:
                 with st.container(border=True):
-                    st.subheader(f"{current_stock_ticker}")
+                    # Display ticker with full name
+                    utils.display_security_header(current_stock_ticker)
                     current_stock_metrics = stock_analysis_data[current_stock_ticker]
                     
                     # Display key metrics
@@ -395,6 +400,11 @@ with tabs[2]:
                         value=["AAPL", "GOOGL", "MSFT", "AMZN", "NVDA"][asset_index] if asset_index < 5 else "",
                         key=f"portfolio_a_asset_{asset_index}"
                     )
+                    # Show security name if ticker is provided
+                    if asset_ticker.strip():
+                        info = utils.get_security_info(asset_ticker.strip())
+                        if info['name'] != asset_ticker.strip():
+                            st.caption(info['name'])
                 with asset_columns[1]:
                     asset_weight = st.number_input(
                         "Weight",
@@ -431,6 +441,11 @@ with tabs[2]:
                         value=["SPY", "VWO", "VEA", "BND", "GLD"][asset_index] if asset_index < 5 else "",
                         key=f"portfolio_b_asset_{asset_index}"
                     )
+                    # Show security name if ticker is provided
+                    if asset_ticker.strip():
+                        info = utils.get_security_info(asset_ticker.strip())
+                        if info['name'] != asset_ticker.strip():
+                            st.caption(info['name'])
                 with asset_columns[1]:
                     asset_weight = st.number_input(
                         "Weight",
@@ -709,7 +724,12 @@ with tabs[3]:
                 asset_ticker_input = st.text_input(
                     f"Asset {asset_input_index+1}", value=["MSFT", "QQQ", "VOO", "VXUS", "GLD"][asset_input_index]
                 )
+                # Show security name if ticker is provided
                 if asset_ticker_input.strip():
+                    info = utils.get_security_info(asset_ticker_input.strip())
+                    if info['name'] != asset_ticker_input.strip():
+                        st.caption(info['name'])
+                    
                     selected_asset_tickers.append(asset_ticker_input.strip())
                     
                     # Add weight constraint inputs side by side
@@ -837,5 +857,68 @@ with tabs[3]:
                         ),
                         use_container_width=True,
                     )
+        
+        # Add cumulative returns comparison chart
+        st.subheader("Portfolio Performance Comparison")
+        with st.container(border=True):
+            if custom_portfolio_weights and custom_portfolio_metrics:
+                # Calculate portfolio returns for each optimized portfolio
+                min_vol_weights = [optimal_portfolios['min_vol'][asset_ticker] for asset_ticker in portfolio_daily_returns.columns]
+                max_sharpe_weights = [optimal_portfolios['max_sharpe'][asset_ticker] for asset_ticker in portfolio_daily_returns.columns]
+                
+                # Calculate daily portfolio returns
+                min_vol_portfolio_returns = (portfolio_daily_returns * min_vol_weights).sum(axis=1)
+                max_sharpe_portfolio_returns = (portfolio_daily_returns * max_sharpe_weights).sum(axis=1)
+                custom_portfolio_returns = (portfolio_daily_returns * custom_portfolio_weights).sum(axis=1)
+                
+                # Calculate cumulative returns (wealth index)
+                min_vol_wealth_index = utils.wealth_index(min_vol_portfolio_returns)
+                max_sharpe_wealth_index = utils.wealth_index(max_sharpe_portfolio_returns)
+                custom_wealth_index = utils.wealth_index(custom_portfolio_returns)
+                
+                # Create cumulative returns comparison chart
+                cumulative_returns_figure = go.Figure()
+                
+                cumulative_returns_figure.add_trace(go.Scatter(
+                    x=min_vol_wealth_index.index,
+                    y=min_vol_wealth_index,
+                    mode="lines",
+                    name="🟢 Min Volatility Portfolio",
+                    line=dict(color="green", width=2)
+                ))
+                
+                cumulative_returns_figure.add_trace(go.Scatter(
+                    x=max_sharpe_wealth_index.index,
+                    y=max_sharpe_wealth_index,
+                    mode="lines",
+                    name="⭐ Max Sharpe Portfolio",
+                    line=dict(color="orange", width=2)
+                ))
+                
+                cumulative_returns_figure.add_trace(go.Scatter(
+                    x=custom_wealth_index.index,
+                    y=custom_wealth_index,
+                    mode="lines",
+                    name="🎯 Custom Target Portfolio",
+                    line=dict(color="blue", width=2)
+                ))
+                
+                cumulative_returns_figure.update_layout(
+                    title="Portfolio Cumulative Returns Comparison",
+                    xaxis_title="Date",
+                    yaxis_title="Cumulative Return",
+                    height=500,
+                    legend=dict(
+                        yanchor="top",
+                        y=0.99,
+                        xanchor="left",
+                        x=0.01
+                    )
+                )
+                
+                st.plotly_chart(cumulative_returns_figure, use_container_width=True)
+            else:
+                st.error("Unable to generate performance comparison - custom portfolio optimization failed")
+    
     else:
         st.info("Enter at least one asset symbol")

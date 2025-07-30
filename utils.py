@@ -384,3 +384,26 @@ def plot_rolling_volatility(returns: pd.Series, ticker: str, window: int = 63, p
     )
     return fig
 
+@st.cache_data()
+def get_security_info(ticker: str) -> dict:
+    """Get security information including full name."""
+    try:
+        stock = yf.Ticker(ticker)
+        info = stock.info
+        return {
+            'name': info.get('longName', info.get('shortName', ticker)),
+            'sector': info.get('sector', 'N/A'),
+            'industry': info.get('industry', 'N/A')
+        }
+    except Exception as e:
+        logger.warning(f"Could not fetch info for {ticker}: {str(e)}")
+        return {'name': ticker, 'sector': 'N/A', 'industry': 'N/A'}
+
+def display_security_header(ticker: str) -> None:
+    """Display ticker with full security name."""
+    info = get_security_info(ticker)
+    if info['name'] != ticker:
+        st.write(f"**{ticker}** - {info['name']}")
+    else:
+        st.write(f"**{ticker}**")
+

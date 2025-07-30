@@ -34,7 +34,7 @@ with st.sidebar:
     ) / 100.0
     
 
-tabs = st.tabs(["Analyze Stock", "Compare Stocks", "Compare Portfolios", "Portfolio Optimization", "Top Winners"])
+tabs = st.tabs(["Analyze Stock", "Compare Stocks", "Compare Portfolios", "Portfolio Optimization"])
 
 # Tab 1: Single Stock Analysis
 with tabs[0]:
@@ -145,6 +145,7 @@ with tabs[1]:
         
         try:
             for current_stock_ticker in stock_tickers_to_compare:
+                # Download data one ticker at a time for better caching
                 stock_price_data = utils.download_data(current_stock_ticker, start_date, end_date)
                 
                 if stock_price_data.empty:
@@ -343,15 +344,27 @@ with tabs[2]:
     # Calculate and display portfolio metrics
     if st.button("Compare Portfolios") and portfolio_a_assets and portfolio_b_assets:
         try:
-            # Download data for both portfolios
+            # Download data for both portfolios - one ticker at a time
             all_assets = list(set(portfolio_a_assets + portfolio_b_assets))
-            price_data = utils.download_data(all_assets, start_date, end_date)
             
-            if price_data.empty:
+            # Combine data from individual downloads
+            combined_price_data = {}
+            available_assets = []
+            
+            for asset in all_assets:
+                asset_data = utils.download_data(asset, start_date, end_date)
+                if not asset_data.empty:
+                    combined_price_data[asset] = asset_data["Close"][asset]
+                    available_assets.append(asset)
+            
+            if not combined_price_data:
                 st.error("No data available for the specified assets.")
             else:
+                # Create combined DataFrame structure
+                price_data_df = pd.DataFrame(combined_price_data)
+                price_data = {"Close": price_data_df}
+                
                 # Check if all required assets have data
-                available_assets = price_data["Close"].columns.tolist()
                 missing_a = [asset for asset in portfolio_a_assets if asset not in available_assets]
                 missing_b = [asset for asset in portfolio_b_assets if asset not in available_assets]
                 
@@ -490,16 +503,24 @@ with tabs[3]:
 
     if selected_asset_tickers:
         try:
-            portfolio_price_data = utils.download_data(selected_asset_tickers, start_date, end_date)
+            # Download data one ticker at a time for better caching
+            combined_portfolio_data = {}
+            available_assets = []
             
-            if portfolio_price_data.empty:
+            for asset in selected_asset_tickers:
+                asset_data = utils.download_data(asset, start_date, end_date)
+                if not asset_data.empty:
+                    if len(selected_asset_tickers) == 1:
+                        combined_portfolio_data[asset] = asset_data[asset]
+                    else:
+                        combined_portfolio_data[asset] = asset_data["Close"][asset]
+                    available_assets.append(asset)
+            
+            if not combined_portfolio_data:
                 st.error("No data available for the specified assets.")
             else:
-                # Check if all assets have data
-                if len(selected_asset_tickers) == 1:
-                    available_assets = [selected_asset_tickers[0]] if selected_asset_tickers[0] in portfolio_price_data.columns else []
-                else:
-                    available_assets = portfolio_price_data["Close"].columns.tolist()
+                # Create combined DataFrame
+                portfolio_price_data = pd.DataFrame(combined_portfolio_data)
                 
                 missing_assets = [asset for asset in selected_asset_tickers if asset not in available_assets]
                 
@@ -507,12 +528,6 @@ with tabs[3]:
                     st.error(f"Missing data for assets: {', '.join(missing_assets)}")
                     st.info("Please check the ticker symbols and try again.")
                 else:
-                    if len(selected_asset_tickers) == 1:
-                        portfolio_price_data = portfolio_price_data[selected_asset_tickers[0]].to_frame()
-                        portfolio_price_data.columns = selected_asset_tickers
-                    else:
-                        portfolio_price_data = portfolio_price_data["Close"]
-                    
                     portfolio_daily_returns = utils.price_to_returns(portfolio_price_data)
                     portfolio_annualized_returns = utils.annualized_return_from_prices_df(portfolio_price_data)
 
@@ -599,69 +614,3 @@ with tabs[3]:
     else:
         st.info("Enter at least one asset symbol")
         st.info("Enter at least one asset symbol")
-
-# Tab 5: Top Winners
-with tabs[4]:
-    st.header("S&P 500 Top 50 Winners")
-    control_columns = st.columns(4)
-    with control_columns[0]:
-        top_n_display = st.slider(
-            "Top N Winners to Display:",
-            min_value=5,
-            max_value=20,
-            value=10,
-            step=1,
-            help="Number of top winners to display"
-        )
-        analyze_button = st.button("Analyze Top Winners", type="primary")
-    
-    if analyze_button:
-        try:
-            # Get top 50 S&P 500 tickers and calculate performance
-            top_tickers = utils.get_sp500_top_tickers(50)
-            performance_data = utils.calculate_wealth_performance(top_tickers, start_date, end_date)
-            
-            if not performance_data:
-                st.error("No performance data could be calculated.")
-            else:
-                # Get S&P 500 reference data if requested
-                sp500_wealth_index = None
-                try:
-                    sp500_data = utils.download_data('SPY', start_date, end_date)
-                    if not sp500_data.empty:
-                        sp500_prices = sp500_data['Close']['SPY'] if isinstance(sp500_data.columns, pd.MultiIndex) else sp500_data['Close']
-                        sp500_returns = utils.price_to_returns(sp500_prices)
-                        sp500_wealth_index = utils.wealth_index(sp500_returns)
-                except Exception as e:
-                    st.warning(f"Could not load S&P 500 reference data: {str(e)}")
-                
-                # Sort performers by wealth index
-                sorted_performers = sorted(performance_data.items(), 
-                                         key=lambda x: x[1]['final_value'], reverse=True)
-                
-                # Display performance table
-                table_data = []
-                for i, (ticker, data) in enumerate(sorted_performers[:20]):
-                    table_data.append({
-                        'Rank': i + 1,
-                        'Ticker': ticker,
-                        'Final Wealth Index': f"{data['final_value']:.2f}",
-                        'Total Return': f"{data['total_return']:.1f}%",
-                        'Annualized Return': f"{data['annualized_return']:.1f}%"
-                    })
-                
-                performance_df = pd.DataFrame(table_data)
-                st.dataframe(performance_df, use_container_width=True, hide_index=True)
-                
-                # Plot wealth index chart
-                wealth_fig = utils.plot_top_performers_wealth_index(
-                    performance_data, 
-                    top_n=top_n_display, 
-                    sp500_data=sp500_wealth_index
-                )
-                st.plotly_chart(wealth_fig, use_container_width=True)
-                
-                
-        except Exception as e:
-            st.error(f"An error occurred during analysis: {str(e)}")
-                # Create and display performance table                

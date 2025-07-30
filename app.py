@@ -184,6 +184,7 @@ with tabs[1]:
                         with metrics_columns[0]:
                             st.metric("Return", f"{current_stock_metrics['return']:.2f}%")
                             st.metric("Volatility", f"{current_stock_metrics['volatility']:.2f}%")
+                            st.metric("Semideviation", f"{current_stock_metrics['semideviation']:.2f}%")
                         with metrics_columns[1]:
                             st.metric("Sharpe", f"{current_stock_metrics['sharpe']:.2f}")
                             st.metric("Max Drawdown", f"{current_stock_metrics['max_drawdown']:.2f}%")

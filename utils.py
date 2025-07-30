@@ -5,11 +5,72 @@ from scipy.optimize import minimize
 from scipy.stats import norm
 import streamlit as st
 import yfinance as yf
+import logging
+from typing import Union, List
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 @st.cache_data()
-def download_data(ticker, start_date, end_date):
-    """Download historical stock data from Yahoo Finance."""
-    return yf.download(ticker, start=start_date, end=end_date)
+def download_data(ticker: Union[str, List[str]], start_date, end_date):
+    """Download historical stock data from Yahoo Finance with error handling and logging."""
+    try:
+        # Log cache miss (function is being executed)
+        if isinstance(ticker, list):
+            ticker_str = ", ".join(ticker)
+        else:
+            ticker_str = ticker
+        
+        logger.info(f"Cache miss: Downloading data for {ticker_str} from {start_date} to {end_date}")
+        
+        data = yf.download(ticker, start=start_date, end=end_date, auto_adjust=True, progress=False)
+        
+        if data.empty:
+            error_msg = f"No data found for ticker(s): {ticker_str}"
+            logger.error(error_msg)
+            st.error(error_msg)
+            return pd.DataFrame()
+        
+        # Check for missing data
+        if isinstance(ticker, list) and len(ticker) > 1:
+            missing_tickers = []
+            for t in ticker:
+                if t not in data.columns.get_level_values(1):
+                    missing_tickers.append(t)
+            
+            if missing_tickers:
+                warning_msg = f"No data found for: {', '.join(missing_tickers)}"
+                logger.warning(warning_msg)
+                st.warning(warning_msg)
+        
+        logger.info(f"Successfully downloaded {len(data)} rows of data for {ticker_str}")
+        return data
+        
+    except Exception as e:
+        error_msg = f"Error downloading data for {ticker_str}: {str(e)}"
+        logger.error(error_msg)
+        st.error(f"❌ {error_msg}")
+        return pd.DataFrame()
+
+# Add a function to detect cache hits
+def download_data_with_cache_logging(ticker: Union[str, List[str]], start_date, end_date):
+    """Wrapper function to log cache hits for download_data."""
+    if isinstance(ticker, list):
+        ticker_str = ", ".join(ticker)
+    else:
+        ticker_str = ticker
+    
+    # Check if data is likely cached by calling with the same parameters
+    cache_key = f"{ticker_str}_{start_date}_{end_date}"
+    
+    # This is a simple way to detect cache hits - in practice, Streamlit handles this internally
+    if hasattr(st.session_state, f"cache_hit_{cache_key}"):
+        logger.info(f"Cache hit: Using cached data for {ticker_str}")
+    else:
+        st.session_state[f"cache_hit_{cache_key}"] = True
+    
+    return download_data(ticker, start_date, end_date)
 
 def annualized_return_from_prices(prices: pd.Series, periods_per_year: int = 252) -> float:
     """Calculate the annualized return of a price series."""
@@ -40,12 +101,23 @@ def annualized_volatility(returns: pd.Series, periods_per_year: int = 252) -> fl
     """Calculate the annualized volatility of a series of returns."""
     return returns.std() * np.sqrt(periods_per_year)
 
-def sharpe_ratio(returns: pd.Series, periods_per_year: int = 252) -> float:
+def sharpe_ratio(returns: pd.Series, periods_per_year: int = 252, risk_free_rate: float = 0.0) -> float:
     """Calculate the Sharpe Ratio of a series of returns."""
-    excess_returns = returns
-    ann_return = annualized_return(excess_returns, periods_per_year)
-    ann_vol = annualized_volatility(excess_returns, periods_per_year)
-    return ann_return / ann_vol if ann_vol > 0 else 0.0
+    ann_return = annualized_return(returns, periods_per_year)
+    ann_vol = annualized_volatility(returns, periods_per_year)
+    return (ann_return - risk_free_rate) / ann_vol if ann_vol > 0 else 0.0
+
+def annualized_semideviation(returns: pd.Series, periods_per_year: int = 252) -> float:
+    """Calculate the annualized semideviation (downside volatility) of a series of returns."""
+    downside_returns = returns[returns < 0]
+    return downside_returns.std() * np.sqrt(periods_per_year) if not downside_returns.empty else 0.0
+
+def sortino_ratio(returns: pd.Series, periods_per_year: int = 252, risk_free_rate: float = 0.0) -> float:
+    """Calculate the Sortino Ratio of a series of returns."""
+    downside_returns = returns[returns < 0]
+    ann_return = annualized_return(returns, periods_per_year)
+    ann_downside_vol = downside_returns.std() * np.sqrt(periods_per_year) if not downside_returns.empty else 0.0
+    return (ann_return - risk_free_rate) / ann_downside_vol if ann_downside_vol > 0 else 0.0
 
 def wealth_index(returns: pd.Series) -> pd.Series:
     """Calculate the wealth index from a series of returns."""
@@ -74,7 +146,7 @@ def portfolio_volatility(returns: pd.DataFrame, weights: np.ndarray, periods_per
     portfolio_variance = weights.T @ cov_matrix @ weights
     return np.sqrt(portfolio_variance)
 
-def min_volatility_portfolio(daily_returns: pd.DataFrame, target_annual_return: float, periods_per_year: int = 252, asset_weight_constraints: dict = None):
+def min_volatility_portfolio(daily_returns: pd.DataFrame, target_annual_return: float, periods_per_year: int = 252, asset_weight_constraints: dict = None, risk_free_rate: float = 0.0):
     """Minimize portfolio volatility for a given target return."""
     number_of_assets = daily_returns.shape[1]
     # Use compound method for expected returns
@@ -118,7 +190,7 @@ def min_volatility_portfolio(daily_returns: pd.DataFrame, target_annual_return: 
         return optimal_weights.tolist()
     return None
 
-def calculate_efficient_frontier(asset_prices: pd.DataFrame, periods_per_year: int = 252, number_of_points: int = 50, asset_weight_constraints: dict = None):
+def calculate_efficient_frontier(asset_prices: pd.DataFrame, periods_per_year: int = 252, number_of_points: int = 50, asset_weight_constraints: dict = None, risk_free_rate: float = 0.0):
     """Calculate the efficient frontier."""
     if asset_prices.empty:
         return pd.DataFrame()
@@ -170,7 +242,7 @@ def calculate_efficient_frontier(asset_prices: pd.DataFrame, periods_per_year: i
     efficient_frontier_portfolio_data = []
 
     # Add min vol portfolio
-    min_volatility_sharpe_ratio = min_variance_return / min_variance_volatility if min_variance_volatility > 0 else 0
+    min_volatility_sharpe_ratio = (min_variance_return - risk_free_rate) / min_variance_volatility if min_variance_volatility > 0 else 0
     min_volatility_portfolio_row = {'Actual Return': min_variance_return, 'Volatility': min_variance_volatility, 'Sharpe Ratio': min_volatility_sharpe_ratio}
     for asset_index, asset_ticker in enumerate(daily_returns.columns):
         min_volatility_portfolio_row[asset_ticker] = min_variance_weights[asset_index]
@@ -199,7 +271,7 @@ def calculate_efficient_frontier(asset_prices: pd.DataFrame, periods_per_year: i
             
             # Validate calculations
             if portfolio_volatility_value > 0 and not np.isnan(portfolio_expected_return) and not np.isnan(portfolio_volatility_value):
-                portfolio_sharpe_ratio = portfolio_expected_return / portfolio_volatility_value
+                portfolio_sharpe_ratio = (portfolio_expected_return - risk_free_rate) / portfolio_volatility_value
 
                 portfolio_row_data = {'Actual Return': portfolio_expected_return, 'Volatility': portfolio_volatility_value, 'Sharpe Ratio': portfolio_sharpe_ratio}
                 for asset_index, asset_ticker in enumerate(daily_returns.columns):

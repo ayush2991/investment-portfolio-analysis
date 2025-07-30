@@ -345,11 +345,11 @@ def create_portfolio_allocation_chart(asset_tickers, portfolio_weights, chart_ti
                      yaxis=dict(tickformat='.1%'), height=300, showlegend=False)
     return allocation_figure
 
-def rolling_volatility(returns: pd.Series, window: int = 252, periods_per_year: int = 252) -> pd.Series:
+def rolling_volatility(returns: pd.Series, window: int = 63, periods_per_year: int = 252) -> pd.Series:
     """Calculate rolling volatility (annualized) for a series of returns."""
     return returns.rolling(window=window).std() * np.sqrt(periods_per_year)
 
-def plot_rolling_volatility(returns: pd.Series, ticker: str, window: int = 252, periods_per_year: int = 252):
+def plot_rolling_volatility(returns: pd.Series, ticker: str, window: int = 63, periods_per_year: int = 252):
     """Create a plotly chart for rolling volatility over time."""
     rolling_vol = rolling_volatility(returns, window, periods_per_year) * 100  # Convert to percentage
     

@@ -183,6 +183,72 @@ with tabs[1]:
                         st.metric("Sortino", f"{current_stock_metrics['sortino']:.2f}")
                         st.metric("Monthly CFVaR (99%)", f"{current_stock_metrics['cfvar']:.2f}%")
 
+        # Calculate correlation
+        stock_a_returns = stock_analysis_data[stock_tickers_to_compare[0]]['monthly_returns']
+        stock_b_returns = stock_analysis_data[stock_tickers_to_compare[1]]['monthly_returns']
+        correlation = stock_a_returns.corr(stock_b_returns)
+
+        # Display correlation analysis
+        st.subheader("Correlation Analysis")
+        with st.container(border=True):
+            correlation_columns = st.columns([1, 2])
+            with correlation_columns[0]:
+                st.metric("Correlation Coefficient", f"{correlation:.3f}")
+                
+                # Interpretation of correlation
+                if correlation >= 0.7:
+                    correlation_interpretation = "Strong Positive"
+                    correlation_color = "🟢"
+                elif correlation >= 0.3:
+                    correlation_interpretation = "Moderate Positive"
+                    correlation_color = "🟡"
+                elif correlation >= -0.3:
+                    correlation_interpretation = "Weak"
+                    correlation_color = "⚪"
+                elif correlation >= -0.7:
+                    correlation_interpretation = "Moderate Negative"
+                    correlation_color = "🟠"
+                else:
+                    correlation_interpretation = "Strong Negative"
+                    correlation_color = "🔴"
+                
+                st.write(f"{correlation_color} **{correlation_interpretation}** correlation")
+            
+            with correlation_columns[1]:
+                # Scatter plot of returns
+                scatter_figure = go.Figure()
+                scatter_figure.add_trace(go.Scatter(
+                    x=stock_a_returns,
+                    y=stock_b_returns,
+                    mode='markers',
+                    name='Daily Returns',
+                    marker=dict(
+                        size=4,
+                        opacity=0.6,
+                        color='blue'
+                    )
+                ))
+                
+                # Add trend line
+                z = np.polyfit(stock_a_returns, stock_b_returns, 1)
+                p = np.poly1d(z)
+                scatter_figure.add_trace(go.Scatter(
+                    x=stock_a_returns,
+                    y=p(stock_a_returns),
+                    mode='lines',
+                    name='Trend Line',
+                    line=dict(color='red', width=2)
+                ))
+                
+                scatter_figure.update_layout(
+                    title=f"Returns Correlation: {stock_tickers_to_compare[0]} vs {stock_tickers_to_compare[1]}",
+                    xaxis_title=f"{stock_tickers_to_compare[0]} Daily Returns",
+                    yaxis_title=f"{stock_tickers_to_compare[1]} Daily Returns",
+                    height=400,
+                    showlegend=False
+                )
+                st.plotly_chart(scatter_figure, use_container_width=True)
+
         # Display charts in rows
         st.subheader("Price Comparison")
         price_chart_columns = st.columns(2)
@@ -426,6 +492,9 @@ with tabs[2]:
         portfolio_b_max_drawdown = utils.drawdown(portfolio_b_monthly_returns)["Drawdown"].min() * 100
         portfolio_b_cfvar = utils.cornish_fisher_var(portfolio_b_monthly_returns, alpha=0.01) * 100
         
+        # Calculate correlation between portfolios
+        portfolio_correlation = portfolio_a_monthly_returns.corr(portfolio_b_monthly_returns)
+        
         # Display comparison results
         st.subheader("Portfolio Comparison Results")
         comparison_results_columns = st.columns(2)
@@ -479,6 +548,67 @@ with tabs[2]:
                     ),
                     use_container_width=True,
                 )
+        
+        # Correlation Analysis for Portfolios
+        st.subheader("Portfolio Correlation Analysis")
+        with st.container(border=True):
+            correlation_columns = st.columns([1, 2])
+            with correlation_columns[0]:
+                st.metric("Correlation Coefficient", f"{portfolio_correlation:.3f}")
+                
+                # Interpretation of correlation
+                if portfolio_correlation >= 0.7:
+                    correlation_interpretation = "Strong Positive"
+                    correlation_color = "🟢"
+                elif portfolio_correlation >= 0.3:
+                    correlation_interpretation = "Moderate Positive"
+                    correlation_color = "🟡"
+                elif portfolio_correlation >= -0.3:
+                    correlation_interpretation = "Weak"
+                    correlation_color = "⚪"
+                elif portfolio_correlation >= -0.7:
+                    correlation_interpretation = "Moderate Negative"
+                    correlation_color = "🟠"
+                else:
+                    correlation_interpretation = "Strong Negative"
+                    correlation_color = "🔴"
+                
+                st.write(f"{correlation_color} **{correlation_interpretation}** correlation")
+            
+            with correlation_columns[1]:
+                # Scatter plot of portfolio returns
+                scatter_figure = go.Figure()
+                scatter_figure.add_trace(go.Scatter(
+                    x=portfolio_a_monthly_returns,
+                    y=portfolio_b_monthly_returns,
+                    mode='markers',
+                    name='Monthly Returns',
+                    marker=dict(
+                        size=4,
+                        opacity=0.6,
+                        color='blue'
+                    )
+                ))
+                
+                # Add trend line
+                z = np.polyfit(portfolio_a_monthly_returns, portfolio_b_monthly_returns, 1)
+                p = np.poly1d(z)
+                scatter_figure.add_trace(go.Scatter(
+                    x=portfolio_a_monthly_returns,
+                    y=p(portfolio_a_monthly_returns),
+                    mode='lines',
+                    name='Trend Line',
+                    line=dict(color='red', width=2)
+                ))
+                
+                scatter_figure.update_layout(
+                    title="Portfolio Returns Correlation: Portfolio A vs Portfolio B",
+                    xaxis_title="Portfolio A Monthly Returns",
+                    yaxis_title="Portfolio B Monthly Returns",
+                    height=400,
+                    showlegend=False
+                )
+                st.plotly_chart(scatter_figure, use_container_width=True)
         
         # Performance comparison charts
         st.subheader("Performance Comparison Charts")

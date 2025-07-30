@@ -41,7 +41,7 @@ with tabs[0]:
     ticker = st.text_input("Stock or ETF Ticker:", "GOOG")
     
     try:
-        data = utils.download_data_with_cache_logging(ticker, start_date, end_date)
+        data = utils.download_data(ticker, start_date, end_date)
         
         if data.empty:
             st.error("No data available. Please check the ticker symbol and date range.")
@@ -145,7 +145,7 @@ with tabs[1]:
         
         try:
             for current_stock_ticker in stock_tickers_to_compare:
-                stock_price_data = utils.download_data_with_cache_logging(current_stock_ticker, start_date, end_date)
+                stock_price_data = utils.download_data(current_stock_ticker, start_date, end_date)
                 
                 if stock_price_data.empty:
                     st.error(f"No data available for {current_stock_ticker}. Skipping...")
@@ -344,7 +344,7 @@ with tabs[2]:
         try:
             # Download data for both portfolios
             all_assets = list(set(portfolio_a_assets + portfolio_b_assets))
-            price_data = utils.download_data_with_cache_logging(all_assets, start_date, end_date)
+            price_data = utils.download_data(all_assets, start_date, end_date)
             
             if price_data.empty:
                 st.error("No data available for the specified assets.")
@@ -489,7 +489,7 @@ with tabs[3]:
 
     if selected_asset_tickers:
         try:
-            portfolio_price_data = utils.download_data_with_cache_logging(selected_asset_tickers, start_date, end_date)
+            portfolio_price_data = utils.download_data(selected_asset_tickers, start_date, end_date)
             
             if portfolio_price_data.empty:
                 st.error("No data available for the specified assets.")

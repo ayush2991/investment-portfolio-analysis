@@ -16,13 +16,12 @@ logger = logging.getLogger(__name__)
 def download_data(ticker: Union[str, List[str]], start_date, end_date):
     """Download historical stock data from Yahoo Finance with error handling and logging."""
     try:
-        # Log cache miss (function is being executed)
         if isinstance(ticker, list):
             ticker_str = ", ".join(ticker)
         else:
             ticker_str = ticker
         
-        logger.info(f"Cache miss: Downloading data for {ticker_str} from {start_date} to {end_date}")
+        logger.info(f"Downloading data for {ticker_str} from {start_date} to {end_date}")
         
         data = yf.download(ticker, start=start_date, end=end_date, auto_adjust=True, progress=False)
         
@@ -52,25 +51,6 @@ def download_data(ticker: Union[str, List[str]], start_date, end_date):
         logger.error(error_msg)
         st.error(f"❌ {error_msg}")
         return pd.DataFrame()
-
-# Add a function to detect cache hits
-def download_data_with_cache_logging(ticker: Union[str, List[str]], start_date, end_date):
-    """Wrapper function to log cache hits for download_data."""
-    if isinstance(ticker, list):
-        ticker_str = ", ".join(ticker)
-    else:
-        ticker_str = ticker
-    
-    # Check if data is likely cached by calling with the same parameters
-    cache_key = f"{ticker_str}_{start_date}_{end_date}"
-    
-    # This is a simple way to detect cache hits - in practice, Streamlit handles this internally
-    if hasattr(st.session_state, f"cache_hit_{cache_key}"):
-        logger.info(f"Cache hit: Using cached data for {ticker_str}")
-    else:
-        st.session_state[f"cache_hit_{cache_key}"] = True
-    
-    return download_data(ticker, start_date, end_date)
 
 def annualized_return_from_prices(prices: pd.Series, periods_per_year: int = 252) -> float:
     """Calculate the annualized return of a price series."""
@@ -311,7 +291,7 @@ def plot_efficient_frontier(efficient_frontier_dataframe, daily_returns_data=Non
     # Highlight special portfolios
     if not sorted_efficient_frontier.empty and 'Sharpe Ratio' in sorted_efficient_frontier.columns:
         maximum_sharpe_index = sorted_efficient_frontier['Sharpe Ratio'].idxmax()
-        minimum_volatility_index = sorted_efficient_frontier['Volatility'].idxmin()
+        minimum_volatility_index = sorted_efficient_frontier['Volatility'].idxmin();
         
         plotly_figure.add_trace(go.Scatter(x=[sorted_efficient_frontier.loc[maximum_sharpe_index, 'Volatility']], 
                                 y=[sorted_efficient_frontier.loc[maximum_sharpe_index, 'Actual Return']],

@@ -34,7 +34,7 @@ with st.sidebar:
     ) / 100.0
     
 
-tabs = st.tabs(["Analyze Stock", "Compare Stocks", "Compare Portfolios", "Portfolio Optimization"])
+tabs = st.tabs(["Analyze Stock", "Compare Stocks", "Compare Portfolios", "Portfolio Optimization", "Top Winners"])
 
 # Tab 1: Single Stock Analysis
 with tabs[0]:
@@ -599,3 +599,69 @@ with tabs[3]:
     else:
         st.info("Enter at least one asset symbol")
         st.info("Enter at least one asset symbol")
+
+# Tab 5: Top Winners
+with tabs[4]:
+    st.header("S&P 500 Top 50 Winners")
+    control_columns = st.columns(4)
+    with control_columns[0]:
+        top_n_display = st.slider(
+            "Top N Winners to Display:",
+            min_value=5,
+            max_value=20,
+            value=10,
+            step=1,
+            help="Number of top winners to display"
+        )
+        analyze_button = st.button("Analyze Top Winners", type="primary")
+    
+    if analyze_button:
+        try:
+            # Get top 50 S&P 500 tickers and calculate performance
+            top_tickers = utils.get_sp500_top_tickers(50)
+            performance_data = utils.calculate_wealth_performance(top_tickers, start_date, end_date)
+            
+            if not performance_data:
+                st.error("No performance data could be calculated.")
+            else:
+                # Get S&P 500 reference data if requested
+                sp500_wealth_index = None
+                try:
+                    sp500_data = utils.download_data('SPY', start_date, end_date)
+                    if not sp500_data.empty:
+                        sp500_prices = sp500_data['Close']['SPY'] if isinstance(sp500_data.columns, pd.MultiIndex) else sp500_data['Close']
+                        sp500_returns = utils.price_to_returns(sp500_prices)
+                        sp500_wealth_index = utils.wealth_index(sp500_returns)
+                except Exception as e:
+                    st.warning(f"Could not load S&P 500 reference data: {str(e)}")
+                
+                # Sort performers by wealth index
+                sorted_performers = sorted(performance_data.items(), 
+                                         key=lambda x: x[1]['final_value'], reverse=True)
+                
+                # Display performance table
+                table_data = []
+                for i, (ticker, data) in enumerate(sorted_performers[:20]):
+                    table_data.append({
+                        'Rank': i + 1,
+                        'Ticker': ticker,
+                        'Final Wealth Index': f"{data['final_value']:.2f}",
+                        'Total Return': f"{data['total_return']:.1f}%",
+                        'Annualized Return': f"{data['annualized_return']:.1f}%"
+                    })
+                
+                performance_df = pd.DataFrame(table_data)
+                st.dataframe(performance_df, use_container_width=True, hide_index=True)
+                
+                # Plot wealth index chart
+                wealth_fig = utils.plot_top_performers_wealth_index(
+                    performance_data, 
+                    top_n=top_n_display, 
+                    sp500_data=sp500_wealth_index
+                )
+                st.plotly_chart(wealth_fig, use_container_width=True)
+                
+                
+        except Exception as e:
+            st.error(f"An error occurred during analysis: {str(e)}")
+                # Create and display performance table                

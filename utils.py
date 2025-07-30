@@ -339,3 +339,93 @@ def create_portfolio_allocation_chart(asset_tickers, portfolio_weights, chart_ti
     allocation_figure.update_layout(title=chart_title, xaxis_title="Assets", yaxis_title="Weight",
                      yaxis=dict(tickformat='.1%'), height=300, showlegend=False)
     return allocation_figure
+
+def get_sp500_top_tickers(top_n: int = 50) -> List[str]:
+    """Get top N S&P 500 tickers by market cap."""
+    # Top 50 S&P 500 companies by market cap (as of recent data)
+    # This is a static list - in production, you'd fetch this dynamically
+    sp500_top_tickers = [
+        'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'NVDA', 'TSLA', 'META', 'BRK-B', 'UNH', 'XOM',
+        'LLY', 'JNJ', 'JPM', 'V', 'PG', 'MA', 'AVGO', 'HD', 'CVX', 'MRK',
+        'ABBV', 'PEP', 'KO', 'COST', 'WMT', 'BAC', 'TMO', 'CRM', 'ACN', 'LIN',
+        'MCD', 'ABT', 'CSCO', 'DHR', 'ADBE', 'VZ', 'WFC', 'TXN', 'ORCL', 'PM',
+        'NKE', 'DIS', 'AMD', 'NFLX', 'COP', 'BMY', 'UPS', 'QCOM', 'RTX', 'IBM'
+    ]
+    return sp500_top_tickers[:top_n]
+
+def calculate_wealth_performance(tickers: List[str], start_date, end_date) -> pd.DataFrame:
+    """Calculate wealth index performance for multiple tickers."""
+    performance_data = {}
+    
+    for ticker in tickers:
+        try:
+            data = download_data(ticker, start_date, end_date)
+            if not data.empty:
+                if isinstance(data.columns, pd.MultiIndex):
+                    close_prices = data['Close'][ticker]
+                else:
+                    close_prices = data['Close']
+                
+                daily_returns = price_to_returns(close_prices)
+                wealth_idx = wealth_index(daily_returns)
+                
+                # Calculate total return and annualized return
+                total_return = (wealth_idx.iloc[-1] - 1) * 100
+                ann_return = annualized_return_from_prices(close_prices) * 100
+                
+                performance_data[ticker] = {
+                    'wealth_index': wealth_idx,
+                    'total_return': total_return,
+                    'annualized_return': ann_return,
+                    'final_value': wealth_idx.iloc[-1]
+                }
+        except Exception as e:
+            logger.warning(f"Failed to process {ticker}: {str(e)}")
+            continue
+    
+    return performance_data
+
+def plot_top_performers_wealth_index(performance_data: dict, top_n: int = 10, sp500_data=None):
+    """Plot wealth index for top performing stocks by final wealth index value."""
+    # Sort by final wealth index value (not total return) and get top N
+    sorted_performers = sorted(performance_data.items(), 
+                             key=lambda x: x[1]['final_value'], reverse=True)
+    top_performers = sorted_performers[:top_n]
+    
+    fig = go.Figure()
+    
+    # Plot each top performer
+    colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', 
+              '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf']
+    
+    for i, (ticker, data) in enumerate(top_performers):
+        color = colors[i % len(colors)]
+        fig.add_trace(go.Scatter(
+            x=data['wealth_index'].index,
+            y=data['wealth_index'],
+            mode='lines',
+            name=f"{ticker} (Final: {data['final_value']:.2f})",
+            line=dict(color=color, width=2)
+        ))
+    
+    # Add S&P 500 reference line if provided
+    if sp500_data is not None:
+        fig.add_trace(go.Scatter(
+            x=sp500_data.index,
+            y=sp500_data,
+            mode='lines',
+            name='S&P 500',
+            line=dict(color='black', width=3, dash='dash'),
+            opacity=0.7
+        ))
+    
+    fig.update_layout(
+        title="Top 10 S&P 500 Stocks by Final Wealth Index Value",
+        xaxis_title="Date",
+        yaxis_title="Wealth Index (Starting Value = 1)",
+        height=600,
+        legend=dict(x=0, y=1, bgcolor='rgba(255,255,255,0.8)'),
+        hovermode='x unified'
+    )
+    
+    return fig

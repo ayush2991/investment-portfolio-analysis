@@ -345,3 +345,42 @@ def create_portfolio_allocation_chart(asset_tickers, portfolio_weights, chart_ti
                      yaxis=dict(tickformat='.1%'), height=300, showlegend=False)
     return allocation_figure
 
+def rolling_volatility(returns: pd.Series, window: int = 252, periods_per_year: int = 252) -> pd.Series:
+    """Calculate rolling volatility (annualized) for a series of returns."""
+    return returns.rolling(window=window).std() * np.sqrt(periods_per_year)
+
+def plot_rolling_volatility(returns: pd.Series, ticker: str, window: int = 252, periods_per_year: int = 252):
+    """Create a plotly chart for rolling volatility over time."""
+    rolling_vol = rolling_volatility(returns, window, periods_per_year) * 100  # Convert to percentage
+    
+    fig = go.Figure()
+    fig.add_trace(
+        go.Scatter(
+            x=rolling_vol.index,
+            y=rolling_vol,
+            mode="lines",
+            line=dict(color="orange"),
+            name=f"{window}-Day Rolling Volatility"
+        )
+    )
+    
+    # Determine the window description
+    if window == 252:
+        window_desc = "1 Year"
+    elif window == 126:
+        window_desc = "6 Months"
+    elif window == 63:
+        window_desc = "3 Months"
+    elif window == 21:
+        window_desc = "1 Month"
+    else:
+        window_desc = f"{window} Days"
+    
+    fig.update_layout(
+        title=f"{ticker} Rolling Volatility ({window_desc})",
+        xaxis_title="Date",
+        yaxis_title="Annualized Volatility (%)",
+        height=400,
+    )
+    return fig
+

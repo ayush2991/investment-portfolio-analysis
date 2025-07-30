@@ -100,6 +100,12 @@ with tabs[0]:
         st.plotly_chart(fig, use_container_width=True)
 
     with cols[1]:
+        # Rolling volatility chart
+        st.plotly_chart(
+            utils.plot_rolling_volatility(daily_returns, ticker),
+            use_container_width=True,
+        )
+
         fig = go.Figure()
         fig.add_trace(
             go.Bar(x=monthly_returns.index, y=monthly_returns, name="Monthly Returns")
@@ -112,16 +118,17 @@ with tabs[0]:
         )
         st.plotly_chart(fig, use_container_width=True)
 
-        wi = utils.wealth_index(monthly_returns)
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(x=wi.index, y=wi, mode="lines"))
-        fig.update_layout(
-            title=f"{ticker} Wealth Index",
-            xaxis_title="Date",
-            yaxis_title="Cumulative Return",
-            height=400,
-        )
-        st.plotly_chart(fig, use_container_width=True)
+    # Add wealth index chart below the 2x2 grid
+    wi = utils.wealth_index(monthly_returns)
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=wi.index, y=wi, mode="lines"))
+    fig.update_layout(
+        title=f"{ticker} Wealth Index",
+        xaxis_title="Date",
+        yaxis_title="Cumulative Return",
+        height=400,
+    )
+    st.plotly_chart(fig, use_container_width=True)
 
 # Tab 2: Stock Comparison
 with tabs[1]:
@@ -273,6 +280,35 @@ with tabs[1]:
                 height=500
             )
             st.plotly_chart(wealth_comparison_figure, use_container_width=True)
+
+        st.subheader("Rolling Volatility Comparison")
+        with st.container(border=True):
+            # Plot both rolling volatilities on the same chart
+            stock_a_rolling_vol = utils.rolling_volatility(stock_analysis_data[stock_tickers_to_compare[0]]['daily_returns']) * 100
+            stock_b_rolling_vol = utils.rolling_volatility(stock_analysis_data[stock_tickers_to_compare[1]]['daily_returns']) * 100
+            
+            rolling_vol_comparison_figure = go.Figure()
+            rolling_vol_comparison_figure.add_trace(go.Scatter(
+                x=stock_a_rolling_vol.index,
+                y=stock_a_rolling_vol,
+                mode="lines",
+                name=f"{stock_tickers_to_compare[0]} Rolling Volatility",
+                line=dict(color="blue")
+            ))
+            rolling_vol_comparison_figure.add_trace(go.Scatter(
+                x=stock_b_rolling_vol.index,
+                y=stock_b_rolling_vol,
+                mode="lines",
+                name=f"{stock_tickers_to_compare[1]} Rolling Volatility",
+                line=dict(color="red")
+            ))
+            rolling_vol_comparison_figure.update_layout(
+                title="Rolling Volatility Comparison (1 Year)",
+                xaxis_title="Date",
+                yaxis_title="Annualized Volatility (%)",
+                height=500
+            )
+            st.plotly_chart(rolling_vol_comparison_figure, use_container_width=True)
 
 # Tab 2: Portfolio Comparison
 with tabs[2]:
@@ -502,6 +538,34 @@ with tabs[2]:
                 height=500
             )
             st.plotly_chart(wealth_comparison_figure, use_container_width=True)
+
+        with st.container(border=True):
+            # Rolling volatility comparison
+            portfolio_a_rolling_vol = utils.rolling_volatility(portfolio_a_portfolio_returns) * 100
+            portfolio_b_rolling_vol = utils.rolling_volatility(portfolio_b_portfolio_returns) * 100
+            
+            portfolio_rolling_vol_figure = go.Figure()
+            portfolio_rolling_vol_figure.add_trace(go.Scatter(
+                x=portfolio_a_rolling_vol.index,
+                y=portfolio_a_rolling_vol,
+                mode="lines",
+                name="Portfolio A Rolling Volatility",
+                line=dict(color="blue")
+            ))
+            portfolio_rolling_vol_figure.add_trace(go.Scatter(
+                x=portfolio_b_rolling_vol.index,
+                y=portfolio_b_rolling_vol,
+                mode="lines",
+                name="Portfolio B Rolling Volatility",
+                line=dict(color="red")
+            ))
+            portfolio_rolling_vol_figure.update_layout(
+                title="Portfolio Rolling Volatility Comparison (1 Year)",
+                xaxis_title="Date",
+                yaxis_title="Annualized Volatility (%)",
+                height=500
+            )
+            st.plotly_chart(portfolio_rolling_vol_figure, use_container_width=True)
 
 # Tab 4: Portfolio Optimization
 with tabs[3]:
